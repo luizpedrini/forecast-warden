@@ -1,13 +1,15 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
 	"github.com/luizpedrini/forecast-warden/internal/config"
-	"github.com/luizpedrini/forecast-warden/internal/incidents"
 	"github.com/luizpedrini/forecast-warden/internal/models"
+	"github.com/luizpedrini/forecast-warden/internal/store"
 )
 
 var (
@@ -34,12 +36,22 @@ var resolveCmd = &cobra.Command{
 		default:
 			fail(fmt.Sprintf("Invalid status: %s", resolveStatus), 2)
 		}
-		updated, err := incidents.ResolveIncident(cfg.IncidentsDir, incidentID, resolveNote, st)
+		db, err := openStore(cfg)
 		if err != nil {
+			fail(err.Error(), 2)
+		}
+		defer db.Close()
+
+		ctx := context.Background()
+		if err := db.UpdateStatus(ctx, incidentID, string(st), resolveNote); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				fail(fmt.Sprintf("Incident not found: %s", incidentID), 2)
+			}
 			fail(fmt.Sprintf("resolve: %v", err), 2)
 		}
-		if updated == nil {
-			fail(fmt.Sprintf("Incident not found: %s", incidentID), 2)
+		updated, err := db.GetIncident(ctx, incidentID)
+		if err != nil {
+			fail(fmt.Sprintf("resolve reload: %v", err), 2)
 		}
 		fmt.Fprintf(Out, "Updated %s → %s\n", updated.ID, updated.Status)
 	},

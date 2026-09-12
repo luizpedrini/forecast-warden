@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -9,9 +10,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/luizpedrini/forecast-warden/internal/config"
-	"github.com/luizpedrini/forecast-warden/internal/incidents"
 	"github.com/luizpedrini/forecast-warden/internal/investigate"
 	"github.com/luizpedrini/forecast-warden/internal/llm"
+	"github.com/luizpedrini/forecast-warden/internal/store"
 )
 
 var investigateConfig string
@@ -40,15 +41,21 @@ Use --write to also save incidents/<id>.investigate.md.`,
 		if err != nil {
 			fail(fmt.Sprintf("config: %v", err), 2)
 		}
-		inc, err := incidents.LoadIncident(cfg.IncidentsDir, incidentID)
+		db, err := openStore(cfg)
+		if err != nil {
+			fail(err.Error(), 2)
+		}
+		defer db.Close()
+
+		inc, err := db.GetIncident(context.Background(), incidentID)
+		if errors.Is(err, store.ErrNotFound) {
+			fail(fmt.Sprintf("Incident not found: %s", incidentID), 2)
+		}
 		if err != nil {
 			fail(fmt.Sprintf("load: %v", err), 2)
 		}
-		if inc == nil {
-			fail(fmt.Sprintf("Incident not found: %s", incidentID), 2)
-		}
 
-		md := investigate.Render(inc)
+		md := investigate.Render(&inc)
 
 		if useLLM {
 			client, err := llm.NewClientFromEnv(provider)
@@ -56,7 +63,7 @@ Use --write to also save incidents/<id>.investigate.md.`,
 				fmt.Fprintf(ErrOut, "warning: --llm skipped: %v\n", err)
 			} else {
 				ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-				enriched, err := llm.EnrichPlaybook(ctx, client, inc, md)
+				enriched, err := llm.EnrichPlaybook(ctx, client, &inc, md)
 				cancel()
 				if err != nil {
 					fmt.Fprintf(ErrOut, "warning: --llm failed, using rule-based only: %v\n", err)

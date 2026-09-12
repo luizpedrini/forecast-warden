@@ -1,6 +1,6 @@
 # forecast-warden — Spec mínima (fatia 1)
 
-**Status:** fatia 1 + pluggable metrics shipped (MIT) · **implementation: Go** (single binary)  
+**Status:** fatia 1 + pluggable metrics + store shipped (MIT) · **implementation: Go** (single binary)  
 **Escopo:** OSS genérico de logística / demand forecasting ops — zero dados ou IP de qualquer empresa  
 **Objetivo da fatia:** num sábado, ter um CLI que lê métricas sintéticas de um run de forecast, detecta anomalias simples e emite um **Forecast Incident** (spec) aprovável por humano.
 
@@ -167,8 +167,8 @@ Exit code: `0` ok, `1` warnings, `2` critical (útil em CI).
 Fatia 1 product contracts above remain normative. The runtime is **Go** (`github.com/luizpedrini/forecast-warden`):
 
 - CLI: `warden` via Cobra (`init|check|list|show|investigate|resolve`)
-- Module layout: `cmd/warden` + `internal/{config,models,csvio,synthetic,detectors,incidents,investigate,llm,cli}`
-- Tests: `go test ./...` (detectors, golden incident, CLI smoke)
+- Module layout: `cmd/warden` + `internal/{config,models,csvio,synthetic,detectors,incidents,investigate,llm,store,cli}`
+- Tests: `go test ./...` (detectors, golden incident, store, CLI smoke)
 - Build: `go build -o warden ./cmd/warden`
 
 
@@ -325,3 +325,52 @@ README: investigate no ritual (check → list → show → **investigate** → r
 - Tests use mock client (success + error fallback) + httptest for HTTP clients; no live API in CI
 - See also `gabinete/forecast-warden/SPEC-investigate-llm.md`
 
+---
+
+## 17. Pluggable store (SQLite default)
+
+## Objetivo
+Persistir incidents + findings em banco. Default SQLite (pure Go `modernc.org/sqlite`). Interface pronta para postgres; driver `file` mantém o legado md+json.
+
+## Config (`warden.yaml`)
+```yaml
+store:
+  driver: sqlite          # sqlite | file | postgres
+  dsn: data/warden.db     # path for sqlite
+  write_markdown: true    # also write incidents/*.md for humans (optional)
+```
+Default if omit: `driver: sqlite`, `dsn: data/warden.db`, `write_markdown: true`.
+
+## Interface (`internal/store`)
+```go
+type Store interface {
+  Close() error
+  SaveIncident(ctx, Incident) error          // upsert by id; includes findings
+  GetIncident(ctx, id string) (Incident, error)
+  ListIncidents(ctx, filter) ([]Incident, error)
+  UpdateStatus(ctx, id, status, note string) error
+}
+```
+Open via `store.Open(cfg) (Store, error)`.
+
+## SQLite schema
+- `incidents`: id PK, run_id, status, severity, entities JSON, detector_codes JSON, suggested_action, note, created_at, resolved_at, hypotheses JSON, raw_json optional
+- `findings`: id INTEGER PK, incident_id FK, code, severity, entity_id, evidence JSON, hint
+- Indexes: `incidents(run_id)`, `incidents(status)`, `findings(incident_id)`
+
+## Behavior
+- `warden init` creates data dir; sqlite file is created on first `warden check`
+- `check`: SaveIncident; respect do-not-clobber terminal statuses (load first)
+- `list` / `show` / `resolve` / `investigate`: read Store (`investigate --llm` unchanged)
+- `file` driver: legacy filesystem md+json for adopters who want no DB
+- `postgres`: recognized name, returns friendly `not implemented yet` (interface ready)
+
+## Testes
+sqlite temp file: save/get/list/update + clobber + findings roundtrip; CLI smoke on sqlite + file drivers.
+
+### Implementation notes (store)
+
+- Package `internal/store`: `Store` interface + `Open`; drivers `sqlite`, `file`, stub `postgres`
+- Prefer pure Go `modernc.org/sqlite` (no CGO)
+- Config block `store:` on `WardenConfig`; `StoreWriteMarkdown()` defaults true when omitted
+- Version **0.6.0**

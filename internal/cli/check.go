@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"github.com/luizpedrini/forecast-warden/internal/detectors"
 	"github.com/luizpedrini/forecast-warden/internal/incidents"
 	"github.com/luizpedrini/forecast-warden/internal/models"
+	"github.com/luizpedrini/forecast-warden/internal/store"
 )
 
 var (
@@ -92,21 +95,42 @@ var checkCmd = &cobra.Command{
 			exitWithSeverity("")
 		}
 
-		existing, err := incidents.LoadIncident(cfg.IncidentsDir, incident.ID)
+		st, err := openStore(cfg)
 		if err != nil {
+			fail(err.Error(), 2)
+		}
+		defer st.Close()
+
+		ctx := context.Background()
+		existing, err := st.GetIncident(ctx, incident.ID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
 			fail(fmt.Sprintf("load incident: %v", err), 2)
 		}
-		if existing != nil && models.IsTerminalStatus(existing.Status) {
+		if err == nil && models.IsTerminalStatus(existing.Status) {
 			fmt.Fprintf(Out, "incident %s already %s; not overwriting\n", existing.ID, existing.Status)
 			exitWithSeverity(string(incident.Severity))
 		}
 
-		mdPath, jsonPath, err := incidents.WriteIncident(cfg.IncidentsDir, incident)
-		if err != nil {
-			fail(fmt.Sprintf("write incident: %v", err), 2)
+		if err := st.SaveIncident(ctx, *incident); err != nil {
+			fail(fmt.Sprintf("save incident: %v", err), 2)
 		}
-		fmt.Fprintf(Out, "Incident %s (%s) → %s + %s\n",
-			incident.ID, incident.Severity, filepath.Base(mdPath), filepath.Base(jsonPath))
+
+		where := cfg.Store.DSN
+		if cfg.Store.Driver == "file" {
+			where = cfg.IncidentsDir
+		}
+		extra := ""
+		if cfg.Store.Driver == "sqlite" && cfg.StoreWriteMarkdown() {
+			mdPath, _ := incidents.IncidentPaths(cfg.IncidentsDir, incident)
+			extra = fmt.Sprintf(" + %s", filepath.Base(mdPath))
+		} else if cfg.Store.Driver == "file" {
+			mdPath, jsonPath := incidents.IncidentPaths(cfg.IncidentsDir, incident)
+			extra = fmt.Sprintf(" → %s + %s", filepath.Base(mdPath), filepath.Base(jsonPath))
+			fmt.Fprintf(Out, "Incident %s (%s)%s\n", incident.ID, incident.Severity, extra)
+			exitWithSeverity(string(incident.Severity))
+		}
+		fmt.Fprintf(Out, "Incident %s (%s) → %s%s\n",
+			incident.ID, incident.Severity, where, extra)
 		exitWithSeverity(string(incident.Severity))
 	},
 }

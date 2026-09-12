@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -8,8 +9,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/luizpedrini/forecast-warden/internal/config"
-	"github.com/luizpedrini/forecast-warden/internal/incidents"
 	"github.com/luizpedrini/forecast-warden/internal/models"
+	"github.com/luizpedrini/forecast-warden/internal/store"
 )
 
 var (
@@ -35,7 +36,13 @@ var listCmd = &cobra.Command{
 				fail(fmt.Sprintf("Invalid status: %s", listStatus), 2)
 			}
 		}
-		incs, err := incidents.ListIncidents(cfg.IncidentsDir, statusPtr)
+		db, err := openStore(cfg)
+		if err != nil {
+			fail(err.Error(), 2)
+		}
+		defer db.Close()
+
+		incs, err := db.ListIncidents(context.Background(), store.ListFilter{Status: statusPtr})
 		if err != nil {
 			fail(fmt.Sprintf("list: %v", err), 2)
 		}

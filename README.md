@@ -1,8 +1,8 @@
 # forecast-warden
 
-**Rule-based CLI for forecast pipeline ops:** synthetic metrics → pluggable detectors → Forecast Incident (markdown + JSON) → human resolve.
+**Rule-based CLI for forecast pipeline ops:** synthetic metrics → pluggable detectors → Forecast Incident → SQLite store (pluggable) → human resolve.
 
-MIT · **Go** (single static binary) · Optional LLM enrichment · No UI · No real company data.
+MIT · **Go** (single static binary) · SQLite default · Optional LLM enrichment · No UI · No real company data.
 
 > **Language decision:** fatia 1 originally shipped in Python; ported to **Go** for a single distributable binary and easier ops/adoption in CI and on-call laptops (no venv/pip). Product contracts (CSV, incidents, exit codes) stay stable; detectors are now **pluggable via `warden.yaml`**.
 
@@ -27,9 +27,9 @@ git clone https://github.com/luizpedrini/forecast-warden.git
 cd forecast-warden
 go build -o warden ./cmd/warden
 
-./warden init          # config + ~14d synthetic zone metrics (some sick) + baseline
-./warden check         # writes ≥1 incident under incidents/ (exit 2 if critical)
-./warden list
+./warden init          # config + data/ + ~14d synthetic metrics (some sick) + baseline
+./warden check         # persists ≥1 incident to SQLite (and incidents/*.md); exit 2 if critical
+./warden list          # reads from store
 ./warden show <id>     # use id from list, e.g. fw-20260912-xxxx
 ./warden investigate <id>          # rule-based playbook (stdout)
 ./warden investigate <id> --write  # also saves incidents/<id>.investigate.md
@@ -92,6 +92,25 @@ Baseline is **long** (`entity_id`, `metric`, `mean`, `std`); includes stability 
 
 An incident opens only if there is ≥1 warning/critical finding. Re-running `check` does **not** clobber terminal statuses (`resolved` / `accepted-risk` / `wontfix`).
 
+## Store (pluggable persistence)
+
+Default persistence is **SQLite** (`data/warden.db`, pure Go — no CGO). Configure in `warden.yaml`:
+
+```yaml
+store:
+  driver: sqlite          # sqlite | file | postgres
+  dsn: data/warden.db
+  write_markdown: true    # also write incidents/*.md for humans
+```
+
+| Driver | Role |
+|--------|------|
+| **sqlite** (default) | Incidents + findings tables; upsert by id; created on first `warden check` |
+| **file** | Legacy markdown + JSON under `incidents/` (no DB) |
+| **postgres** | Recognized; returns a clear *not implemented yet* error (interface ready) |
+
+`warden init` creates the data directory; the sqlite file appears on the first successful check. Re-running `check` still does **not** clobber terminal statuses (`resolved` / `accepted-risk` / `wontfix`).
+
 ## CLI
 
 ```
@@ -132,7 +151,7 @@ export WARDEN_LLM_MODEL=gpt-4o-mini   # provider default if unset
 - Web UI
 - Real company data or IP
 
-See [SPEC.md](SPEC.md) for the full contract (fatia 1 + pluggable metrics + stability + investigate).
+See [SPEC.md](SPEC.md) for the full contract (fatia 1 + pluggable metrics + stability + investigate + store).
 
 ## Develop
 
@@ -143,6 +162,7 @@ go build -o warden ./cmd/warden
 
 ## Changelog
 
+- **0.6.0:** Pluggable `internal/store` — SQLite default (`modernc.org/sqlite`), legacy `file` driver, postgres stub. `warden.yaml` `store:` block (`driver` / `dsn` / `write_markdown`). CLI check/list/show/resolve/investigate use Store; init creates data dir; sqlite file on first check.
 - **0.5.0:** `warden investigate --llm` — optional LLM enrichment (`## LLM synthesis`) via OpenAI/Anthropic (stdlib HTTP, env keys). Rule-based playbook remains source of truth; LLM failure → stderr warning + rule-based fallback (exit 0).
 - **0.4.0:** `warden investigate <id>` — rule-based investigation playbook (attack order, per-finding questions, 15-min checklist, suggested resolve decision, ready-made `--note`). `--write` → `incidents/<id>.investigate.md`. Ritual: check → list → show → **investigate** → resolve.
 - **0.3.0:** Opinionated logistics triad defaults: **WAPE + bias + stability** (UnstableForecast). HighMAPE/HighRMSE/CoverageBreak demoted to optional examples. Synth emits `stability`; missing column → UnstableForecast no-op.

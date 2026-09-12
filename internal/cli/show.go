@@ -1,7 +1,8 @@
 package cli
 
 import (
-	"encoding/json"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/luizpedrini/forecast-warden/internal/config"
 	"github.com/luizpedrini/forecast-warden/internal/incidents"
+	"github.com/luizpedrini/forecast-warden/internal/store"
 )
 
 var showConfig string
@@ -25,13 +27,21 @@ var showCmd = &cobra.Command{
 		if err != nil {
 			fail(fmt.Sprintf("config: %v", err), 2)
 		}
-		inc, err := incidents.LoadIncident(cfg.IncidentsDir, incidentID)
+		db, err := openStore(cfg)
+		if err != nil {
+			fail(err.Error(), 2)
+		}
+		defer db.Close()
+
+		inc, err := db.GetIncident(context.Background(), incidentID)
+		if errors.Is(err, store.ErrNotFound) {
+			fail(fmt.Sprintf("Incident not found: %s", incidentID), 2)
+		}
 		if err != nil {
 			fail(fmt.Sprintf("load: %v", err), 2)
 		}
-		if inc == nil {
-			fail(fmt.Sprintf("Incident not found: %s", incidentID), 2)
-		}
+
+		// Prefer human markdown sidecar when present.
 		mds, _ := filepath.Glob(filepath.Join(cfg.IncidentsDir, "*.md"))
 		for _, md := range mds {
 			text, err := os.ReadFile(md)
@@ -39,19 +49,13 @@ var showCmd = &cobra.Command{
 				continue
 			}
 			s := string(text)
-			head := s
-			if len(head) > 200 {
-				head = head[:200]
-			}
 			if strings.Contains(s, "id: "+inc.ID) || strings.Contains(s, "id: "+incidentID) ||
 				strings.Contains(filepath.Base(md), incidentID) {
 				fmt.Fprint(Out, s)
 				return
 			}
 		}
-		enc := json.NewEncoder(Out)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(inc)
+		fmt.Fprint(Out, incidents.RenderMarkdown(&inc))
 	},
 }
 

@@ -38,6 +38,17 @@ var initCmd = &cobra.Command{
 		metricsPath := cfg.MetricsPath()
 		baselinePath := cfg.BaselinePath()
 
+		// Ensure data dir (and parent of sqlite DSN) exists; sqlite file is
+		// created on first `warden check`.
+		if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
+			fail(fmt.Sprintf("mkdir data: %v", err), 2)
+		}
+		if dsnDir := filepath.Dir(cfg.Store.DSN); dsnDir != "" && dsnDir != "." {
+			if err := os.MkdirAll(dsnDir, 0o755); err != nil {
+				fail(fmt.Sprintf("mkdir store dsn dir: %v", err), 2)
+			}
+		}
+
 		if _, err := os.Stat(metricsPath); err == nil && !initForce {
 			fmt.Fprintf(Out, "%s exists (use --force).\n", metricsPath)
 		} else {
@@ -61,8 +72,7 @@ var initCmd = &cobra.Command{
 		if err := os.MkdirAll(cfg.IncidentsDir, 0o755); err != nil {
 			fail(fmt.Sprintf("mkdir incidents: %v", err), 2)
 		}
-		// keep .gitkeep if present
-		_ = filepath.Join(cfg.IncidentsDir, ".gitkeep")
+		fmt.Fprintf(Out, "Ready data dir: %s/ (sqlite DSN %s on first check)\n", cfg.DataDir, cfg.Store.DSN)
 		fmt.Fprintf(Out, "Ready incidents dir: %s/\n", cfg.IncidentsDir)
 		fmt.Fprintln(Out, "Next: warden check")
 	},

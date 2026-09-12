@@ -101,3 +101,73 @@ thresholds:
 		t.Fatalf("HighMAPE critical=%v", mape.Critical)
 	}
 }
+
+func TestLoadStoreDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "warden.yaml")
+	if err := config.WriteDefaultConfig(path); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Store.Driver != "sqlite" {
+		t.Fatalf("driver=%s", cfg.Store.Driver)
+	}
+	if cfg.Store.DSN != "data/warden.db" {
+		t.Fatalf("dsn=%s", cfg.Store.DSN)
+	}
+	if !cfg.StoreWriteMarkdown() {
+		t.Fatal("write_markdown default true")
+	}
+}
+
+func TestLoadStoreWriteMarkdownFalse(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "warden.yaml")
+	content := `schema_version: 2
+data_dir: data
+incidents_dir: incidents
+store:
+  driver: sqlite
+  dsn: data/custom.db
+  write_markdown: false
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Store.DSN != "data/custom.db" {
+		t.Fatalf("dsn=%s", cfg.Store.DSN)
+	}
+	if cfg.StoreWriteMarkdown() {
+		t.Fatal("want write_markdown false")
+	}
+}
+
+func TestLoadOmitStoreBlock(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "warden.yaml")
+	content := `schema_version: 2
+data_dir: data
+incidents_dir: incidents
+detectors:
+  - id: LowSupport
+    type: low_support
+    min_support: 30
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Store.Driver != "sqlite" || cfg.Store.DSN != "data/warden.db" || !cfg.StoreWriteMarkdown() {
+		t.Fatalf("omit store should default: %+v", cfg.Store)
+	}
+}

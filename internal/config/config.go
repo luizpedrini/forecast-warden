@@ -33,6 +33,13 @@ type LegacyThresholds struct {
 	CoverageWarning  *float64 `yaml:"coverage_warning"`
 }
 
+// StoreConfig selects the persistence driver (sqlite default).
+type StoreConfig struct {
+	Driver        string `yaml:"driver" json:"driver"`                   // sqlite | file | postgres
+	DSN           string `yaml:"dsn" json:"dsn"`                         // sqlite path
+	WriteMarkdown *bool  `yaml:"write_markdown" json:"write_markdown"`   // nil → true
+}
+
 type WardenConfig struct {
 	SchemaVersion    int              `yaml:"schema_version" json:"schema_version"`
 	DataDir          string           `yaml:"data_dir" json:"data_dir"`
@@ -40,6 +47,7 @@ type WardenConfig struct {
 	MetricsFilename  string           `yaml:"metrics_filename" json:"metrics_filename"`
 	BaselineFilename string           `yaml:"baseline_filename" json:"baseline_filename"`
 	Detectors        []DetectorConfig `yaml:"detectors" json:"detectors"`
+	Store            StoreConfig      `yaml:"store" json:"store"`
 	// Thresholds is legacy; if present and Detectors empty, converted on load.
 	Thresholds *LegacyThresholds `yaml:"thresholds,omitempty" json:"thresholds,omitempty"`
 }
@@ -113,6 +121,15 @@ func ClassicDetectorsFromLegacy(t LegacyThresholds) []DetectorConfig {
 	}
 }
 
+func DefaultStoreConfig() StoreConfig {
+	t := true
+	return StoreConfig{
+		Driver:        "sqlite",
+		DSN:           "data/warden.db",
+		WriteMarkdown: &t,
+	}
+}
+
 func DefaultConfig() WardenConfig {
 	return WardenConfig{
 		SchemaVersion:    2,
@@ -121,7 +138,16 @@ func DefaultConfig() WardenConfig {
 		MetricsFilename:  "run_metrics.csv",
 		BaselineFilename: "baseline_stats.csv",
 		Detectors:        DefaultDetectors(),
+		Store:            DefaultStoreConfig(),
 	}
+}
+
+// StoreWriteMarkdown returns whether markdown sidecars should be written.
+func (c WardenConfig) StoreWriteMarkdown() bool {
+	if c.Store.WriteMarkdown == nil {
+		return true
+	}
+	return *c.Store.WriteMarkdown
 }
 
 func (c WardenConfig) MetricsPath() string {
@@ -138,6 +164,12 @@ data_dir: data
 incidents_dir: incidents
 metrics_filename: run_metrics.csv
 baseline_filename: baseline_stats.csv
+
+# Persistence: sqlite (default) | file (legacy md+json) | postgres (not implemented yet)
+store:
+  driver: sqlite
+  dsn: data/warden.db
+  write_markdown: true   # also write incidents/*.md for humans
 
 # Recommended logistics triad: WAPE + bias + stability (+ LowSupport hygiene).
 # Types: threshold | zscore | low_support.
@@ -208,6 +240,7 @@ func LoadConfig(path string) (WardenConfig, error) {
 	if raw.SchemaVersion != 0 {
 		cfg.SchemaVersion = raw.SchemaVersion
 	}
+	cfg.Store = mergeStoreConfig(raw.Store)
 
 	switch {
 	case len(raw.Detectors) > 0:
@@ -254,6 +287,20 @@ func MustExistOrDefault(path string) (WardenConfig, error) {
 		return WardenConfig{}, err
 	}
 	return LoadConfig(path)
+}
+
+func mergeStoreConfig(raw StoreConfig) StoreConfig {
+	out := DefaultStoreConfig()
+	if strings.TrimSpace(raw.Driver) != "" {
+		out.Driver = strings.ToLower(strings.TrimSpace(raw.Driver))
+	}
+	if strings.TrimSpace(raw.DSN) != "" {
+		out.DSN = raw.DSN
+	}
+	if raw.WriteMarkdown != nil {
+		out.WriteMarkdown = raw.WriteMarkdown
+	}
+	return out
 }
 
 func FormatDetectors(dets []DetectorConfig) string {
