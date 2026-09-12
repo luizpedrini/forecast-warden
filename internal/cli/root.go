@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const Version = "0.1.0"
+const Version = "0.4.0"
 
 // ExitFunc is overridable in tests (defaults to os.Exit).
 var ExitFunc = os.Exit
@@ -34,6 +34,7 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 	rootCmd.AddCommand(showCmd)
 	rootCmd.AddCommand(resolveCmd)
+	rootCmd.AddCommand(investigateCmd)
 }
 
 func Execute() error {

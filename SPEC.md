@@ -105,6 +105,7 @@ warden init          # fixtures sintéticos + config default
 warden check         # lê metrics, roda detectors, escreve incidents se preciso
 warden list          # incidents por status
 warden show <id>
+warden investigate <id> [--write]  # roteiro de investigação (rule-based)
 warden resolve <id> --note "..."
 ```
 
@@ -165,8 +166,8 @@ Exit code: `0` ok, `1` warnings, `2` critical (útil em CI).
 
 Fatia 1 product contracts above remain normative. The runtime is **Go** (`github.com/luizpedrini/forecast-warden`):
 
-- CLI: `warden` via Cobra (`init|check|list|show|resolve`)
-- Module layout: `cmd/warden` + `internal/{config,models,csvio,synthetic,detectors,incidents,cli}`
+- CLI: `warden` via Cobra (`init|check|list|show|investigate|resolve`)
+- Module layout: `cmd/warden` + `internal/{config,models,csvio,synthetic,detectors,incidents,investigate,cli}`
 - Tests: `go test ./...` (detectors, golden incident, CLI smoke)
 - Build: `go build -o warden ./cmd/warden`
 
@@ -255,3 +256,53 @@ README + SPEC.md: “Recommended logistics triad: WAPE, bias, stability” + def
 - `warden.yaml` `schema_version: 2` with `detectors:` list; legacy `thresholds:` block still migrates to classic 4 detectors (HighMAPE/BiasShift/LowSupport/CoverageBreak)
 - Default detectors: HighWAPE / BiasShift / UnstableForecast / LowSupport
 - Synth `init` emits `wape`, `rmse`, `stability`; Z3/Z7 sick on wape + stability for demo findings
+
+---
+
+## 16. Investigate (roteiro agentico)
+
+## Objetivo
+A partir de um Forecast Incident existente, gerar um **roteiro de investigação** acionável (perguntas + ordem + próximos passos + o que coletar fora do warden). Sem acessar warehouse, forecast raw ou dado corporativo.
+
+## Comando
+```
+warden investigate <id>           # imprime no stdout
+warden investigate <id> --write   # também grava incidents/<id>.investigate.md
+```
+
+## Entrada
+Incident já persistido (md/json). Lê findings, severity, entities, detector codes, suggested_action.
+
+## Saída (markdown)
+1. **Contexto** — 3 linhas: run, entidades, severidade, ação sugerida
+2. **Ordem de ataque** — prioriza: UnstableForecast → BiasShift → HighWAPE → outros → LowSupport por último
+3. **Por finding** — pergunta-chave, o que evidência já diz, o que buscar *fora* (lista genérica: actuals vs yhat, diff origins, calendário, top volume drivers — sem SQL de empresa)
+4. **Checklist de 15 min** — 5–7 itens tickable
+5. **Decisão sugerida** — mapear para enum de resolve (hold_promotion / retrain / retune_threshold / accepted_risk / investigate)
+6. **Nota pronta** — uma linha candidata para `warden resolve --note "..."` 
+
+## Motor (fatia)
+Rule-based templates por `detector code` + combinação (ex. WAPE+stability juntos → hipótese churn+erro de volume). Sem LLM nesta fatia (hook futuro: `--llm` no-op ou flag reserved).
+
+## Não-objetivos
+- Conectar S3/SQL/APIs
+- Recalcular métricas
+- Auto-resolve
+- UI
+
+## Testes
+- Golden incident → investigate contém seções e prioriza stability antes de WAPE quando ambos critical
+- --write cria arquivo
+- id inexistente → erro claro
+
+## Docs
+README: investigate no ritual (check → list → show → **investigate** → resolve)
+
+### Implementation notes (investigate)
+
+- Package `internal/investigate`: `Render(*Incident) string`, `OrderFindings`, combo hints, `PlaybookPath`
+- Attack order ranks: UnstableForecast → BiasShift → HighWAPE → other thresholds → LowSupport last
+- CLI: `warden investigate <id> [--write] [--llm]`; `--write` → `incidents/<id>.investigate.md`; `--llm` reserved no-op
+- Sections: Context, Attack order (+ combo hints), Per-finding questions, 15-min checklist, Suggested resolve decision, Ready-made `--note`
+- Generic outside-warden guidance only (no company SQL)
+

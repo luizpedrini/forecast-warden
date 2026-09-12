@@ -14,9 +14,10 @@ Forecast teams invest in *models* and under-invest in *cycle management*: drift,
 
 1. After the batch: `warden check`
 2. If any finding ≥ `warning`: an `open` Forecast Incident is written
-3. Weekly triage (15 min): humans review `open` incidents
-4. **Gate:** promote / change config only after critical incidents are `resolved` or `accepted-risk`
-5. Close the loop with `warden resolve <id> --note "..."`
+3. Weekly triage (15 min): humans review `open` incidents (`warden list` → `warden show <id>`)
+4. **Investigate:** `warden investigate <id>` prints a rule-based playbook (attack order, questions, 15-min checklist); `--write` saves `incidents/<id>.investigate.md`
+5. **Gate:** promote / change config only after critical incidents are `resolved` or `accepted-risk`
+6. Close the loop with `warden resolve <id> --note "..."` (playbook includes a ready-made `--note` line)
 
 ## Quickstart (5-minute demo)
 
@@ -29,6 +30,8 @@ go build -o warden ./cmd/warden
 ./warden check         # writes ≥1 incident under incidents/ (exit 2 if critical)
 ./warden list
 ./warden show <id>     # use id from list, e.g. fw-20260912-xxxx
+./warden investigate <id>          # rule-based playbook (stdout)
+./warden investigate <id> --write  # also saves incidents/<id>.investigate.md
 ./warden resolve <id> --note "reviewed; hold promotion until retune"
 ```
 
@@ -94,8 +97,11 @@ warden init
 warden check [--run-id YYYY-MM-DD] [--metrics PATH]
 warden list [--status open|resolved|accepted-risk|wontfix]
 warden show <id>
+warden investigate <id> [--write] [--llm]
 warden resolve <id> --note "..." [--status resolved|accepted-risk|wontfix]
 ```
+
+`investigate` is **rule-based only** (templates per detector + combo hints). Attack order: UnstableForecast → BiasShift → HighWAPE → other thresholds → LowSupport last. `--llm` is reserved (no-op). No warehouse/SQL — only generic “look outside warden” guidance.
 
 ## Non-goals
 
@@ -106,7 +112,7 @@ warden resolve <id> --note "..." [--status resolved|accepted-risk|wontfix]
 - Web UI
 - Real company data or IP
 
-See [SPEC.md](SPEC.md) for the full contract (fatia 1 + pluggable metrics + stability).
+See [SPEC.md](SPEC.md) for the full contract (fatia 1 + pluggable metrics + stability + investigate).
 
 ## Develop
 
@@ -117,6 +123,7 @@ go build -o warden ./cmd/warden
 
 ## Changelog
 
+- **0.4.0:** `warden investigate <id>` — rule-based investigation playbook (attack order, per-finding questions, 15-min checklist, suggested resolve decision, ready-made `--note`). `--write` → `incidents/<id>.investigate.md`. Ritual: check → list → show → **investigate** → resolve.
 - **0.3.0:** Opinionated logistics triad defaults: **WAPE + bias + stability** (UnstableForecast). HighMAPE/HighRMSE/CoverageBreak demoted to optional examples. Synth emits `stability`; missing column → UnstableForecast no-op.
 - **0.2.0:** Pluggable metrics (`metrics_v2` wide CSV) and detectors (`threshold` / `zscore` / `low_support` in `warden.yaml`). Optional `wape`/`rmse`; HighWAPE as logistics-opinionated default. Baseline long per metric. Missing metric → no-op.
 - **0.1.0 (Go rewrite):** Port fatia 1 from Python to Go. Same detectors, CSV/incident contracts, and exit codes.

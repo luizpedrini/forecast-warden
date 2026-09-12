@@ -194,3 +194,77 @@ func TestCheckDoesNotClobberResolvedIncident(t *testing.T) {
 		t.Fatalf("expected still 1 incident json, got %d", len(matchesAfter))
 	}
 }
+
+func TestInvestigatePlaybook(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("check exit=%d out=%s", code, out)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "incidents", "*.json"))
+	if len(matches) < 1 {
+		t.Fatal("expected incident")
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	incidentID, _ := payload["id"].(string)
+	if incidentID == "" {
+		t.Fatal("missing id")
+	}
+
+	out, code = runCLI(t, dir, "investigate", incidentID)
+	if code != 0 {
+		t.Fatalf("investigate exit=%d out=%s", code, out)
+	}
+	for _, section := range []string{
+		"## Context",
+		"## Attack order",
+		"## Per-finding questions",
+		"## 15-min checklist",
+		"## Suggested resolve decision",
+		"Ready-made",
+	} {
+		if !strings.Contains(out, section) {
+			t.Fatalf("missing %q in investigate output:\n%s", section, out)
+		}
+	}
+	// Synthetic golden has UnstableForecast + HighWAPE critical — stability before WAPE in attack order.
+	attackIdx := strings.Index(out, "## Attack order")
+	perIdx := strings.Index(out, "## Per-finding questions")
+	if attackIdx < 0 || perIdx <= attackIdx {
+		t.Fatal("attack/per-finding sections")
+	}
+	block := out[attackIdx:perIdx]
+	u := strings.Index(block, "UnstableForecast")
+	w := strings.Index(block, "HighWAPE")
+	if u < 0 || w < 0 || u > w {
+		t.Fatalf("want UnstableForecast before HighWAPE in attack order:\n%s", block)
+	}
+
+	out, code = runCLI(t, dir, "investigate", incidentID, "--write")
+	if code != 0 {
+		t.Fatalf("investigate --write exit=%d out=%s", code, out)
+	}
+	playbook := filepath.Join(dir, "incidents", incidentID+".investigate.md")
+	if _, err := os.Stat(playbook); err != nil {
+		t.Fatalf("expected playbook file %s: %v", playbook, err)
+	}
+
+	out, code = runCLI(t, dir, "investigate", "does-not-exist-xyz")
+	if code == 0 {
+		t.Fatal("expected non-zero exit for missing id")
+	}
+	if !strings.Contains(out, "not found") && !strings.Contains(out, "Incident not found") {
+		t.Fatalf("expected clear not-found error, got: %s", out)
+	}
+}
