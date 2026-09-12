@@ -131,3 +131,66 @@ func TestInitCheckListShowResolve(t *testing.T) {
 		t.Fatalf("list resolved: %s", out)
 	}
 }
+
+func TestCheckDoesNotClobberResolvedIncident(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("first check exit=%d (want 2) out=%s", code, out)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "incidents", "*.json"))
+	if len(matches) != 1 {
+		t.Fatalf("expected 1 incident json, got %d", len(matches))
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	incidentID, _ := payload["id"].(string)
+	if incidentID == "" {
+		t.Fatal("missing id")
+	}
+	if payload["status"] != "open" {
+		t.Fatalf("status after first check=%v want open", payload["status"])
+	}
+
+	out, code = runCLI(t, dir, "resolve", incidentID, "--note", "reviewed; false alarm")
+	if code != 0 {
+		t.Fatalf("resolve exit=%d out=%s", code, out)
+	}
+
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("second check exit=%d (want 2 from findings) out=%s", code, out)
+	}
+	if !strings.Contains(out, "already resolved") || !strings.Contains(out, "not overwriting") {
+		t.Fatalf("expected skip-overwrite message, got: %s", out)
+	}
+
+	data, err = os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["status"] != "resolved" {
+		t.Fatalf("status after second check=%v want resolved (must not clobber)", payload["status"])
+	}
+	if payload["id"] != incidentID {
+		t.Fatalf("id changed: %v", payload["id"])
+	}
+	matchesAfter, _ := filepath.Glob(filepath.Join(dir, "incidents", "*.json"))
+	if len(matchesAfter) != 1 {
+		t.Fatalf("expected still 1 incident json, got %d", len(matchesAfter))
+	}
+}

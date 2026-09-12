@@ -32,6 +32,17 @@ const (
 	StatusWontfix      IncidentStatus = "wontfix"
 )
 
+// IsTerminalStatus reports whether s is a closed outcome that must not be
+// overwritten back to open by a subsequent check.
+func IsTerminalStatus(s IncidentStatus) bool {
+	switch s {
+	case StatusResolved, StatusAcceptedRisk, StatusWontfix:
+		return true
+	default:
+		return false
+	}
+}
+
 type SuggestedAction string
 
 const (

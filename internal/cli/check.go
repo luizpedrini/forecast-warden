@@ -91,6 +91,16 @@ var checkCmd = &cobra.Command{
 			fmt.Fprintln(Out, "No incident opened (info-only or clean).")
 			exitWithSeverity("")
 		}
+
+		existing, err := incidents.LoadIncident(cfg.IncidentsDir, incident.ID)
+		if err != nil {
+			fail(fmt.Sprintf("load incident: %v", err), 2)
+		}
+		if existing != nil && models.IsTerminalStatus(existing.Status) {
+			fmt.Fprintf(Out, "incident %s already %s; not overwriting\n", existing.ID, existing.Status)
+			exitWithSeverity(string(incident.Severity))
+		}
+
 		mdPath, jsonPath, err := incidents.WriteIncident(cfg.IncidentsDir, incident)
 		if err != nil {
 			fail(fmt.Sprintf("write incident: %v", err), 2)
