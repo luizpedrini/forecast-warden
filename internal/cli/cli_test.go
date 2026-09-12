@@ -8,10 +8,28 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"github.com/luizpedrini/forecast-warden/internal/cli"
 )
 
+func resetInvestigateFlags(cmd *cobra.Command) {
+	for _, c := range cmd.Commands() {
+		if c.Name() == "investigate" {
+			_ = c.Flags().Set("write", "false")
+			_ = c.Flags().Set("llm", "false")
+			_ = c.Flags().Set("provider", "")
+		}
+	}
+}
+
 func runCLI(t *testing.T, dir string, args ...string) (stdout string, code int) {
+	t.Helper()
+	stdout, _, code = runCLIFull(t, dir, args...)
+	return stdout, code
+}
+
+func runCLIFull(t *testing.T, dir string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	oldWD, err := os.Getwd()
 	if err != nil {
@@ -42,12 +60,14 @@ func runCLI(t *testing.T, dir string, args ...string) (stdout string, code int) 
 			}
 		}
 		stdout = buf.String()
+		stderr = errBuf.String()
 		if errBuf.Len() > 0 && stdout == "" {
 			stdout = errBuf.String()
 		}
 	}()
 
 	cmd := cli.NewRootCmd()
+	resetInvestigateFlags(cmd)
 	cmd.SetArgs(args)
 	cmd.SetOut(&buf)
 	cmd.SetErr(&errBuf)
@@ -56,7 +76,8 @@ func runCLI(t *testing.T, dir string, args ...string) (stdout string, code int) 
 		t.Fatalf("execute error: %v\nstderr=%s", err, errBuf.String())
 	}
 	stdout = buf.String()
-	return stdout, code
+	stderr = errBuf.String()
+	return stdout, stderr, code
 }
 
 func TestInitCheckListShowResolve(t *testing.T) {
@@ -266,5 +287,48 @@ func TestInvestigatePlaybook(t *testing.T) {
 	}
 	if !strings.Contains(out, "not found") && !strings.Contains(out, "Incident not found") {
 		t.Fatalf("expected clear not-found error, got: %s", out)
+	}
+}
+
+func TestInvestigateLLMFallbackWithoutKey(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("check exit=%d out=%s", code, out)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, "incidents", "*.json"))
+	if len(matches) < 1 {
+		t.Fatal("expected incident")
+	}
+	data, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatal(err)
+	}
+	incidentID, _ := payload["id"].(string)
+
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("WARDEN_LLM_PROVIDER", "")
+
+	stdout, stderr, code := runCLIFull(t, dir, "investigate", incidentID, "--llm")
+	if code != 0 {
+		t.Fatalf("investigate --llm without key should exit 0, got %d stderr=%s", code, stderr)
+	}
+	if !strings.Contains(stderr, "warning:") || !strings.Contains(stderr, "--llm") {
+		t.Fatalf("expected stderr warning about --llm, got: %s", stderr)
+	}
+	if !strings.Contains(stdout, "## Context") {
+		t.Fatalf("expected rule-based playbook on stdout: %s", stdout)
+	}
+	if strings.Contains(stdout, "## LLM synthesis") {
+		t.Fatal("must not include LLM synthesis when key missing")
 	}
 }

@@ -105,7 +105,7 @@ warden init          # fixtures sintéticos + config default
 warden check         # lê metrics, roda detectors, escreve incidents se preciso
 warden list          # incidents por status
 warden show <id>
-warden investigate <id> [--write]  # roteiro de investigação (rule-based)
+warden investigate <id> [--write] [--llm] [--provider openai|anthropic]  # roteiro (+ LLM opcional)
 warden resolve <id> --note "..."
 ```
 
@@ -127,7 +127,7 @@ Exit code: `0` ok, `1` warnings, `2` critical (útil em CI).
 
 ## 11. Fora / depois
 
-- LLM narra o incident  
+- LLM narra o incident (parcial: `investigate --llm` enrichment)  
 - Ponte forecast-to-fleet  
 - Plug Feast/metrics store  
 - Hierarquia SKU×nó  
@@ -167,7 +167,7 @@ Exit code: `0` ok, `1` warnings, `2` critical (útil em CI).
 Fatia 1 product contracts above remain normative. The runtime is **Go** (`github.com/luizpedrini/forecast-warden`):
 
 - CLI: `warden` via Cobra (`init|check|list|show|investigate|resolve`)
-- Module layout: `cmd/warden` + `internal/{config,models,csvio,synthetic,detectors,incidents,investigate,cli}`
+- Module layout: `cmd/warden` + `internal/{config,models,csvio,synthetic,detectors,incidents,investigate,llm,cli}`
 - Tests: `go test ./...` (detectors, golden incident, CLI smoke)
 - Build: `go build -o warden ./cmd/warden`
 
@@ -282,7 +282,18 @@ Incident já persistido (md/json). Lê findings, severity, entities, detector co
 6. **Nota pronta** — uma linha candidata para `warden resolve --note "..."` 
 
 ## Motor (fatia)
-Rule-based templates por `detector code` + combinação (ex. WAPE+stability juntos → hipótese churn+erro de volume). Sem LLM nesta fatia (hook futuro: `--llm` no-op ou flag reserved).
+Rule-based templates por `detector code` + combinação (ex. WAPE+stability juntos → hipótese churn+erro de volume). Sempre calcula o playbook rule-based primeiro.
+
+### `--llm` (enrichment opcional)
+```
+warden investigate <id> --llm [--provider openai|anthropic] [--write]
+```
+- Provider default: `WARDEN_LLM_PROVIDER` ou `openai`. Modelo: `WARDEN_LLM_MODEL` (defaults `gpt-4o-mini` / `claude-3-5-haiku-latest`).
+- Keys só via env: `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (nunca flags).
+- Prompt = incident JSON + playbook rule-based + system prompt estrito (proíbe inventar SQL/sistemas/causas sem evidência).
+- Acrescenta seção `## LLM synthesis` (parágrafo + hipóteses ranqueadas + note opcional); seções rule-based intactas.
+- Falha LLM → warning em stderr + saída rule-based; exit 0 se investigate ok (não quebra CI).
+- Não auto-resolve nem muda thresholds.
 
 ## Não-objetivos
 - Conectar S3/SQL/APIs
@@ -302,7 +313,15 @@ README: investigate no ritual (check → list → show → **investigate** → r
 
 - Package `internal/investigate`: `Render(*Incident) string`, `OrderFindings`, combo hints, `PlaybookPath`
 - Attack order ranks: UnstableForecast → BiasShift → HighWAPE → other thresholds → LowSupport last
-- CLI: `warden investigate <id> [--write] [--llm]`; `--write` → `incidents/<id>.investigate.md`; `--llm` reserved no-op
+- CLI: `warden investigate <id> [--write] [--llm] [--provider openai|anthropic]`; `--write` → `incidents/<id>.investigate.md`
 - Sections: Context, Attack order (+ combo hints), Per-finding questions, 15-min checklist, Suggested resolve decision, Ready-made `--note`
 - Generic outside-warden guidance only (no company SQL)
+
+### Implementation notes (`--llm`)
+
+- Package `internal/llm`: pluggable `Client.Complete(ctx, system, user string) (string, error)`
+- Stdlib HTTP: OpenAI Chat Completions + Anthropic Messages
+- `EnrichPlaybook` → parse JSON enrichment → `## LLM synthesis` inserted after Context
+- Tests use mock client (success + error fallback) + httptest for HTTP clients; no live API in CI
+- See also `gabinete/forecast-warden/SPEC-investigate-llm.md`
 

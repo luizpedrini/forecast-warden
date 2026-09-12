@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const Version = "0.4.0"
+const Version = "0.5.0"
 
 // ExitFunc is overridable in tests (defaults to os.Exit).
 var ExitFunc = os.Exit

@@ -2,7 +2,7 @@
 
 **Rule-based CLI for forecast pipeline ops:** synthetic metrics → pluggable detectors → Forecast Incident (markdown + JSON) → human resolve.
 
-MIT · **Go** (single static binary) · No LLM · No UI · No real company data.
+MIT · **Go** (single static binary) · Optional LLM enrichment · No UI · No real company data.
 
 > **Language decision:** fatia 1 originally shipped in Python; ported to **Go** for a single distributable binary and easier ops/adoption in CI and on-call laptops (no venv/pip). Product contracts (CSV, incidents, exit codes) stay stable; detectors are now **pluggable via `warden.yaml`**.
 
@@ -16,8 +16,9 @@ Forecast teams invest in *models* and under-invest in *cycle management*: drift,
 2. If any finding ≥ `warning`: an `open` Forecast Incident is written
 3. Weekly triage (15 min): humans review `open` incidents (`warden list` → `warden show <id>`)
 4. **Investigate:** `warden investigate <id>` prints a rule-based playbook (attack order, questions, 15-min checklist); `--write` saves `incidents/<id>.investigate.md`
-5. **Gate:** promote / change config only after critical incidents are `resolved` or `accepted-risk`
-6. Close the loop with `warden resolve <id> --note "..."` (playbook includes a ready-made `--note` line)
+5. **Optional LLM:** `warden investigate <id> --llm` adds `## LLM synthesis` (env API key); failures fall back to rule-based
+6. **Gate:** promote / change config only after critical incidents are `resolved` or `accepted-risk`
+7. Close the loop with `warden resolve <id> --note "..."` (playbook includes a ready-made `--note` line)
 
 ## Quickstart (5-minute demo)
 
@@ -32,6 +33,7 @@ go build -o warden ./cmd/warden
 ./warden show <id>     # use id from list, e.g. fw-20260912-xxxx
 ./warden investigate <id>          # rule-based playbook (stdout)
 ./warden investigate <id> --write  # also saves incidents/<id>.investigate.md
+./warden investigate <id> --llm    # optional LLM synthesis (needs API key)
 ./warden resolve <id> --note "reviewed; hold promotion until retune"
 ```
 
@@ -97,17 +99,35 @@ warden init
 warden check [--run-id YYYY-MM-DD] [--metrics PATH]
 warden list [--status open|resolved|accepted-risk|wontfix]
 warden show <id>
-warden investigate <id> [--write] [--llm]
+warden investigate <id> [--write] [--llm] [--provider openai|anthropic]
 warden resolve <id> --note "..." [--status resolved|accepted-risk|wontfix]
 ```
 
-`investigate` is **rule-based only** (templates per detector + combo hints). Attack order: UnstableForecast → BiasShift → HighWAPE → other thresholds → LowSupport last. `--llm` is reserved (no-op). No warehouse/SQL — only generic “look outside warden” guidance.
+`investigate` always builds the **rule-based** playbook first (templates per detector + combo hints). Attack order: UnstableForecast → BiasShift → HighWAPE → other thresholds → LowSupport last. No warehouse/SQL — only generic “look outside warden” guidance.
+
+### Optional `--llm` enrichment
+
+```bash
+export OPENAI_API_KEY=sk-...          # or ANTHROPIC_API_KEY
+# optional:
+export WARDEN_LLM_PROVIDER=openai     # or anthropic
+export WARDEN_LLM_MODEL=gpt-4o-mini   # provider default if unset
+
+./warden investigate <id> --llm
+./warden investigate <id> --llm --provider anthropic --write
+```
+
+- Adds a `## LLM synthesis` section (short paragraph + ranked hypotheses + optional refined `--note`).
+- Prompt context is **only** the incident JSON + rule-based playbook; the system prompt forbids inventing SQL, company systems, or ungrounded root causes.
+- Keys from **environment only** (never CLI flags). Do not send proprietary warehouse dumps — only the metrics already on the incident.
+- On any LLM error (missing key, network, bad JSON): **stderr warning** + rule-based output; exit `0` if investigate itself succeeded (CI-safe).
+- `--llm` never auto-resolves or changes detector thresholds.
 
 ## Non-goals
 
 - Training or serving models / computing metrics from y/yhat raw (including stability)
 - Feature store / Feast / long-format required
-- Required LLM narration
+- Required LLM narration (optional `--llm` only)
 - Fleet / promise integration
 - Web UI
 - Real company data or IP
@@ -123,6 +143,7 @@ go build -o warden ./cmd/warden
 
 ## Changelog
 
+- **0.5.0:** `warden investigate --llm` — optional LLM enrichment (`## LLM synthesis`) via OpenAI/Anthropic (stdlib HTTP, env keys). Rule-based playbook remains source of truth; LLM failure → stderr warning + rule-based fallback (exit 0).
 - **0.4.0:** `warden investigate <id>` — rule-based investigation playbook (attack order, per-finding questions, 15-min checklist, suggested resolve decision, ready-made `--note`). `--write` → `incidents/<id>.investigate.md`. Ritual: check → list → show → **investigate** → resolve.
 - **0.3.0:** Opinionated logistics triad defaults: **WAPE + bias + stability** (UnstableForecast). HighMAPE/HighRMSE/CoverageBreak demoted to optional examples. Synth emits `stability`; missing column → UnstableForecast no-op.
 - **0.2.0:** Pluggable metrics (`metrics_v2` wide CSV) and detectors (`threshold` / `zscore` / `low_support` in `warden.yaml`). Optional `wape`/`rmse`; HighWAPE as logistics-opinionated default. Baseline long per metric. Missing metric → no-op.
