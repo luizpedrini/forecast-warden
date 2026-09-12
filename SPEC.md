@@ -1,6 +1,6 @@
 # forecast-warden — Spec mínima (fatia 1)
 
-**Status:** fatia 1 shipped (MIT)  
+**Status:** fatia 1 shipped (MIT) · **implementation: Go** (ported from Python; single binary)  
 **Escopo:** OSS genérico de logística / demand forecasting ops — zero dados ou IP de qualquer empresa  
 **Objetivo da fatia:** num sábado, ter um CLI que lê métricas sintéticas de um run de forecast, detecta anomalias simples e emite um **Forecast Incident** (spec) aprovável por humano.
 
@@ -159,3 +159,13 @@ Exit code: `0` ok, `1` warnings, `2` critical (útil em CI).
 ### Papéis fatia 1
 - **Agente/CLI:** detecta, emite incident `open`, lista/mostra.
 - **Humano:** `resolve` / `accepted-risk`; decide promoção de modelo (fora do repo ainda).
+
+
+## 14. Implementation note (Go port)
+
+Fatia 1 product contracts above remain normative. The runtime is **Go** (`github.com/luizpedrini/forecast-warden`):
+
+- CLI: `warden` via Cobra (`init|check|list|show|resolve`)
+- Module layout: `cmd/warden` + `internal/{config,models,csvio,synthetic,detectors,incidents,cli}`
+- Tests: `go test ./...` (detectors, golden incident, CLI smoke)
+- Build: `go build -o warden ./cmd/warden`
