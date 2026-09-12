@@ -34,15 +34,27 @@ go build -o warden ./cmd/warden
 
 Exit codes (CI-friendly): `0` ok · `1` warning · `2` critical.
 
-Demo sick zones (latest run): **Z3** critical MAPE/WAPE + bias + coverage; **Z7** warning MAPE/WAPE + bias; **Z5** low support (info only).
+Demo sick zones (latest run): **Z3** critical WAPE + bias + unstable forecast; **Z7** warning WAPE/stability + bias; **Z5** low support (info only).
+
+## Recommended logistics triad: WAPE, bias, stability
+
+Opinionated defaults for demand / logistics forecast ops:
+
+| Metric | Why |
+|--------|-----|
+| **WAPE** | Volume-weighted absolute % error — preferred over MAPE when volumes vary across SKUs/zones |
+| **bias** | Systematic over/under-forecast vs baseline (abs + z-score) |
+| **stability** | Forecast churn: mean absolute relative change of the point forecast vs the previous origin for the same target horizon (fraction ≥0; **0 = perfectly stable**). Higher = worse. The warden does **not** compute it from y/yhat — the adopter’s batch writes the column (same as wape/bias). Synth emits a plausible `stability` column |
+
+MAPE / RMSE / coverage remain available as **optional** detector examples in config (not defaults).
 
 ## Pluggable metrics & detectors
 
-Metrics CSV is **wide `metrics_v2`**: stable identity columns plus optional float metrics. Unknown / non-float columns are ignored. Detectors that reference a **missing** metric produce **no finding** (no crash) — so old CSVs without `wape`/`rmse` keep working.
+Metrics CSV is **wide `metrics_v2`**: stable identity columns plus optional float metrics. Unknown / non-float columns are ignored. Detectors that reference a **missing** metric produce **no finding** (no crash) — so old CSVs without `wape`/`stability` keep working (those detectors no-op).
 
 | Stable columns | Optional metrics (examples) |
 |----------------|----------------------------|
-| `run_id`, `entity_type`, `entity_id`, `n_actuals`, `generated_at` | `mape`, `bias`, `coverage_80`, **`wape`**, **`rmse`**, … |
+| `run_id`, `entity_type`, `entity_id`, `n_actuals`, `generated_at` | **`wape`**, **`bias`**, **`stability`**, `mape`, `rmse`, `coverage_80`, … |
 
 Configure detectors in `warden.yaml` (`schema_version: 2`):
 
@@ -56,16 +68,22 @@ Configure detectors in `warden.yaml` (`schema_version: 2`):
 
 | Detector | Rule | Severity |
 |----------|------|----------|
-| **HighMAPE** | `mape > 0.25` & `n ≥ 30` → warning; `> 0.40` → critical | warning / critical |
-| **HighWAPE** | `wape > 0.30` / `> 0.45` (logistics-opinionated; volume-weighted) | warning / critical |
-| **HighRMSE** | `rmse > 10` / `> 20` | warning / critical |
+| **HighWAPE** | `wape > 0.30` / `> 0.45` & `n ≥ 30` | warning / critical |
 | **BiasShift** | `\|bias\| > 0.15` **or** `\|z\| > 3` vs baseline | warning |
+| **UnstableForecast** | `stability > 0.15` / `> 0.30` & `n ≥ 30` (`direction: above`) | warning / critical |
 | **LowSupport** | `n < 30` | **info only** (alone does **not** open an incident) |
-| **CoverageBreak** | `coverage_80 < 0.60` & `n ≥ 30` (`direction: below`) | warning |
 
-**WAPE** is a logistics-friendly default option: when volumes vary across SKUs/zones, MAPE can overweight tiny series; WAPE weights by actual volume. Keep HighMAPE, add HighWAPE, or swap — it's config, not a rewrite.
+### Optional examples (not defaults)
 
-Baseline is **long** (`entity_id`, `metric`, `mean`, `std`); legacy wide `mape_mean`/`bias_mean` files still load.
+Add these in `warden.yaml` if you still track them:
+
+| Detector | Rule |
+|----------|------|
+| **HighMAPE** | `mape > 0.25` / `> 0.40` |
+| **HighRMSE** | `rmse > 10` / `> 20` |
+| **CoverageBreak** | `coverage_80 < 0.60` (`direction: below`) |
+
+Baseline is **long** (`entity_id`, `metric`, `mean`, `std`); includes stability mean/std when present. Legacy wide `mape_mean`/`bias_mean` files still load. UnstableForecast is threshold-only (baseline optional).
 
 An incident opens only if there is ≥1 warning/critical finding. Re-running `check` does **not** clobber terminal statuses (`resolved` / `accepted-risk` / `wontfix`).
 
@@ -81,14 +99,14 @@ warden resolve <id> --note "..." [--status resolved|accepted-risk|wontfix]
 
 ## Non-goals
 
-- Training or serving models / computing metrics from y/yhat raw
+- Training or serving models / computing metrics from y/yhat raw (including stability)
 - Feature store / Feast / long-format required
 - Required LLM narration
 - Fleet / promise integration
 - Web UI
 - Real company data or IP
 
-See [SPEC.md](SPEC.md) for the full contract (fatia 1 + pluggable metrics).
+See [SPEC.md](SPEC.md) for the full contract (fatia 1 + pluggable metrics + stability).
 
 ## Develop
 
@@ -99,6 +117,7 @@ go build -o warden ./cmd/warden
 
 ## Changelog
 
+- **0.3.0:** Opinionated logistics triad defaults: **WAPE + bias + stability** (UnstableForecast). HighMAPE/HighRMSE/CoverageBreak demoted to optional examples. Synth emits `stability`; missing column → UnstableForecast no-op.
 - **0.2.0:** Pluggable metrics (`metrics_v2` wide CSV) and detectors (`threshold` / `zscore` / `low_support` in `warden.yaml`). Optional `wape`/`rmse`; HighWAPE as logistics-opinionated default. Baseline long per metric. Missing metric → no-op.
 - **0.1.0 (Go rewrite):** Port fatia 1 from Python to Go. Same detectors, CSV/incident contracts, and exit codes.
 

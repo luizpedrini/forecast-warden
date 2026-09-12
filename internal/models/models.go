@@ -64,7 +64,7 @@ const (
 )
 
 // MetricRow is a wide metrics_v2 row: stable identity columns plus optional
-// float metrics (mape, bias, coverage_80, wape, rmse, …). Absent metrics are
+// float metrics (wape, bias, stability, mape, rmse, coverage_80, …). Absent metrics are
 // simply missing from Metrics — detectors that reference them no-op.
 type MetricRow struct {
 	RunID       string             `json:"run_id"`

@@ -126,6 +126,8 @@ func thresholdHint(metric, dir string) string {
 		return "RMSE elevated vs threshold; check scale of residuals / outliers."
 	case "coverage_80":
 		return "Prediction intervals undercovering; check variance / calibration."
+	case "stability":
+		return "High forecast churn vs prior origin; planning nervousness — consider freeze policy or origin smoothing."
 	default:
 		if dir == "below" {
 			return fmt.Sprintf("%s below threshold; investigate.", metric)

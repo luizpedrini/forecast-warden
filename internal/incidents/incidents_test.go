@@ -22,7 +22,7 @@ func TestLowSupportAloneDoesNotOpenIncident(t *testing.T) {
 		NActuals:    12,
 		GeneratedAt: time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC),
 		Metrics: map[string]float64{
-			"mape": 0.12, "bias": 0.02, "coverage_80": 0.81, "wape": 0.14, "rmse": 4.0,
+			"mape": 0.12, "bias": 0.02, "coverage_80": 0.81, "wape": 0.14, "rmse": 4.0, "stability": 0.08,
 		},
 	}
 	findings := detectors.RunAll([]models.MetricRow{row}, nil, config.DefaultDetectors())
@@ -75,24 +75,31 @@ func TestGoldenIncidentFromSyntheticLatest(t *testing.T) {
 		t.Fatal("expected warning/critical findings on sick zones")
 	}
 	hasZ3 := false
-	hasCrit := false
-	hasWAPE := false
+	hasCritWAPE := false
+	hasBias := false
+	hasUnstable := false
 	for _, f := range action {
 		if f.EntityID == "Z3" {
 			hasZ3 = true
 		}
-		if f.Code == "HighMAPE" && f.Severity == models.SeverityCritical {
-			hasCrit = true
+		if f.Code == "HighWAPE" && f.Severity == models.SeverityCritical {
+			hasCritWAPE = true
 		}
-		if f.Code == "HighWAPE" {
-			hasWAPE = true
+		if f.Code == "BiasShift" {
+			hasBias = true
+		}
+		if f.Code == "UnstableForecast" {
+			hasUnstable = true
 		}
 	}
-	if !hasZ3 || !hasCrit {
-		t.Fatalf("Z3/HighMAPE critical missing: %+v", action)
+	if !hasZ3 || !hasCritWAPE {
+		t.Fatalf("Z3/HighWAPE critical missing: %+v", action)
 	}
-	if !hasWAPE {
-		t.Fatalf("expected HighWAPE on sick synth: %+v", action)
+	if !hasBias {
+		t.Fatalf("expected BiasShift on sick synth: %+v", action)
+	}
+	if !hasUnstable {
+		t.Fatalf("expected UnstableForecast on sick synth: %+v", action)
 	}
 	incident := incidents.BuildIncident(latest, findings, time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC))
 	if incident == nil {
@@ -110,14 +117,21 @@ func TestGoldenIncidentFromSyntheticLatest(t *testing.T) {
 	if !foundZ3 {
 		t.Fatalf("entities=%v", incident.Entities)
 	}
-	foundHM := false
+	foundHW := false
+	foundUF := false
 	for _, c := range incident.DetectorCodes {
-		if c == "HighMAPE" {
-			foundHM = true
+		if c == "HighWAPE" {
+			foundHW = true
+		}
+		if c == "UnstableForecast" {
+			foundUF = true
 		}
 	}
-	if !foundHM {
-		t.Fatalf("codes=%v", incident.DetectorCodes)
+	if !foundHW {
+		t.Fatalf("codes missing HighWAPE: %v", incident.DetectorCodes)
+	}
+	if !foundUF {
+		t.Fatalf("codes missing UnstableForecast: %v", incident.DetectorCodes)
 	}
 
 	tmp := t.TempDir()
@@ -173,6 +187,12 @@ func TestSickProfilesDocumented(t *testing.T) {
 	}
 	if synthetic.SickProfiles["Z7"].WAPE <= 0.30 {
 		t.Fatal("Z7 wape should be warning vs HighWAPE")
+	}
+	if synthetic.SickProfiles["Z3"].Stability <= 0.30 {
+		t.Fatal("Z3 stability should be critical vs UnstableForecast")
+	}
+	if synthetic.SickProfiles["Z7"].Stability <= 0.15 {
+		t.Fatal("Z7 stability should be warning vs UnstableForecast")
 	}
 }
 

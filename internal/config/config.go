@@ -46,37 +46,30 @@ type WardenConfig struct {
 
 func f64(v float64) *float64 { return &v }
 
-// DefaultDetectors preserves HighMAPE / BiasShift / LowSupport / CoverageBreak
-// behavior from fatia 1, plus optional HighWAPE / HighRMSE (logistics-friendly).
+// DefaultDetectors is the opinionated logistics triad: WAPE + bias + stability,
+// plus LowSupport hygiene. HighMAPE / HighRMSE / CoverageBreak remain available
+// as optional config examples (not defaults).
 func DefaultDetectors() []DetectorConfig {
 	return []DetectorConfig{
 		{
-			ID: "HighMAPE", Type: "threshold", Metric: "mape",
-			Warning: f64(0.25), Critical: f64(0.40), MinSupport: 30, Direction: "above",
-		},
-		{
 			ID: "HighWAPE", Type: "threshold", Metric: "wape",
 			Warning: f64(0.30), Critical: f64(0.45), MinSupport: 30, Direction: "above",
-		},
-		{
-			ID: "HighRMSE", Type: "threshold", Metric: "rmse",
-			Warning: f64(10.0), Critical: f64(20.0), MinSupport: 30, Direction: "above",
 		},
 		{
 			ID: "BiasShift", Type: "zscore", Metric: "bias",
 			AbsWarning: f64(0.15), ZWarning: f64(3.0), MinSupport: 30,
 		},
 		{
-			ID: "LowSupport", Type: "low_support", MinSupport: 30, Severity: "info",
+			ID: "UnstableForecast", Type: "threshold", Metric: "stability",
+			Warning: f64(0.15), Critical: f64(0.30), MinSupport: 30, Direction: "above",
 		},
 		{
-			ID: "CoverageBreak", Type: "threshold", Metric: "coverage_80",
-			Warning: f64(0.60), MinSupport: 30, Direction: "below",
+			ID: "LowSupport", Type: "low_support", MinSupport: 30, Severity: "info",
 		},
 	}
 }
 
-// ClassicDetectors is the fatia-1 set only (no WAPE/RMSE) — used when migrating
+// ClassicDetectors is the fatia-1 set only (no WAPE/RMSE/stability) — used when migrating
 // a legacy thresholds block so behavior stays identical.
 func ClassicDetectorsFromLegacy(t LegacyThresholds) []DetectorConfig {
 	minN := 30
@@ -146,29 +139,16 @@ incidents_dir: incidents
 metrics_filename: run_metrics.csv
 baseline_filename: baseline_stats.csv
 
-# Detectors are pluggable. Types: threshold | zscore | low_support.
+# Recommended logistics triad: WAPE + bias + stability (+ LowSupport hygiene).
+# Types: threshold | zscore | low_support.
 # Threshold direction: above (default) or below. Missing metrics → no finding.
-# HighWAPE is a logistics-opinionated option (WAPE often preferred over MAPE).
+# Optional examples (not defaults): HighMAPE, HighRMSE, CoverageBreak — see README.
 detectors:
-  - id: HighMAPE
-    type: threshold
-    metric: mape
-    warning: 0.25
-    critical: 0.40
-    min_support: 30
-    direction: above
   - id: HighWAPE
     type: threshold
     metric: wape
     warning: 0.30
     critical: 0.45
-    min_support: 30
-    direction: above
-  - id: HighRMSE
-    type: threshold
-    metric: rmse
-    warning: 10.0
-    critical: 20.0
     min_support: 30
     direction: above
   - id: BiasShift
@@ -177,16 +157,17 @@ detectors:
     abs_warning: 0.15
     z_warning: 3.0
     min_support: 30
+  - id: UnstableForecast
+    type: threshold
+    metric: stability
+    warning: 0.15
+    critical: 0.30
+    min_support: 30
+    direction: above
   - id: LowSupport
     type: low_support
     min_support: 30
     severity: info
-  - id: CoverageBreak
-    type: threshold
-    metric: coverage_80
-    direction: below
-    warning: 0.60
-    min_support: 30
 `
 
 func WriteDefaultConfig(path string) error {

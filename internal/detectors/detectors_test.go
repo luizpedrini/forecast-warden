@@ -24,6 +24,7 @@ func row(opts ...func(*models.MetricRow)) models.MetricRow {
 			"coverage_80": 0.85,
 			"wape":        0.12,
 			"rmse":        4.0,
+			"stability":   0.07,
 		},
 	}
 	for _, o := range opts {
@@ -272,4 +273,88 @@ func TestRunAllClassicPreservesBehavior(t *testing.T) {
 			t.Fatalf("missing %s in %+v", want, findings)
 		}
 	}
+}
+
+func TestUnstableForecastFinding(t *testing.T) {
+	det := detectors.ThresholdDetector{Cfg: config.DetectorConfig{
+		ID: "UnstableForecast", Type: "threshold", Metric: "stability",
+		Warning: f64(0.15), Critical: f64(0.30), MinSupport: 30, Direction: "above",
+	}}
+	findings := det.Detect([]models.MetricRow{row(func(r *models.MetricRow) {
+		r.SetMetric("stability", 0.35)
+		r.NActuals = 80
+	})}, nil)
+	if len(findings) != 1 || findings[0].Severity != models.SeverityCritical || findings[0].Code != "UnstableForecast" {
+		t.Fatalf("unexpected: %+v", findings)
+	}
+	if findings[0].Evidence["metric"] != "stability" {
+		t.Fatalf("metric evidence=%v", findings[0].Evidence["metric"])
+	}
+	if findings[0].Hint == "" || !containsSub(findings[0].Hint, "churn") {
+		t.Fatalf("hint should mention churn: %q", findings[0].Hint)
+	}
+}
+
+func TestUnstableForecastWarning(t *testing.T) {
+	det := detectors.ThresholdDetector{Cfg: config.DetectorConfig{
+		ID: "UnstableForecast", Type: "threshold", Metric: "stability",
+		Warning: f64(0.15), Critical: f64(0.30), MinSupport: 30, Direction: "above",
+	}}
+	findings := det.Detect([]models.MetricRow{row(func(r *models.MetricRow) {
+		r.SetMetric("stability", 0.20)
+		r.NActuals = 60
+	})}, nil)
+	if len(findings) != 1 || findings[0].Severity != models.SeverityWarning {
+		t.Fatalf("unexpected: %+v", findings)
+	}
+}
+
+func TestMissingStabilityNoOp(t *testing.T) {
+	det := detectors.ThresholdDetector{Cfg: config.DetectorConfig{
+		ID: "UnstableForecast", Type: "threshold", Metric: "stability",
+		Warning: f64(0.15), Critical: f64(0.30), MinSupport: 30, Direction: "above",
+	}}
+	r := row(func(r *models.MetricRow) {
+		delete(r.Metrics, "stability")
+		r.SetMetric("wape", 0.50)
+	})
+	findings := det.Detect([]models.MetricRow{r}, nil)
+	if len(findings) != 0 {
+		t.Fatalf("expected no-op for missing stability, got %+v", findings)
+	}
+}
+
+func TestDefaultDetectorsTriadFires(t *testing.T) {
+	findings := detectors.RunAll([]models.MetricRow{row(func(r *models.MetricRow) {
+		r.SetMetric("wape", 0.48)
+		r.SetMetric("bias", 0.22)
+		r.SetMetric("stability", 0.35)
+		r.NActuals = 80
+	})}, nil, config.DefaultDetectors())
+	codes := map[string]bool{}
+	for _, f := range findings {
+		codes[f.Code] = true
+	}
+	for _, want := range []string{"HighWAPE", "BiasShift", "UnstableForecast"} {
+		if !codes[want] {
+			t.Fatalf("missing %s in %+v", want, findings)
+		}
+	}
+	for _, gone := range []string{"HighMAPE", "HighRMSE", "CoverageBreak"} {
+		if codes[gone] {
+			t.Fatalf("unexpected default finding %s", gone)
+		}
+	}
+}
+
+func containsSub(s, sub string) bool {
+	return len(s) >= len(sub) && (s == sub ||
+		func() bool {
+			for i := 0; i+len(sub) <= len(s); i++ {
+				if s[i:i+len(sub)] == sub {
+					return true
+				}
+			}
+			return false
+		}())
 }

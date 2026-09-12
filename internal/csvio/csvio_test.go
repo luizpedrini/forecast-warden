@@ -46,12 +46,20 @@ func TestV1CSVCompat(t *testing.T) {
 	if !codes["HighMAPE"] || !codes["BiasShift"] || !codes["CoverageBreak"] {
 		t.Fatalf("classic findings missing: %+v", findings)
 	}
-	// Default detectors include HighWAPE — must no-op (no crash, no finding) when wape absent
+	// Default triad detectors that need wape/stability — must no-op when columns absent
 	all := detectors.RunAll(rows, nil, config.DefaultDetectors())
 	for _, f := range all {
-		if f.Code == "HighWAPE" || f.Code == "HighRMSE" {
+		if f.Code == "HighWAPE" || f.Code == "UnstableForecast" {
 			t.Fatalf("unexpected finding for missing metric: %+v", f)
 		}
+	}
+	// BiasShift still fires (bias present)
+	codes2 := map[string]bool{}
+	for _, f := range all {
+		codes2[f.Code] = true
+	}
+	if !codes2["BiasShift"] {
+		t.Fatalf("expected BiasShift on v1 CSV with bias: %+v", all)
 	}
 }
 

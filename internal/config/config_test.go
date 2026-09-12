@@ -25,10 +25,41 @@ func TestLoadDefaultDetectorsYAML(t *testing.T) {
 	for _, d := range cfg.Detectors {
 		ids[d.ID] = true
 	}
-	for _, want := range []string{"HighMAPE", "HighWAPE", "HighRMSE", "BiasShift", "LowSupport", "CoverageBreak"} {
-		if !ids[want] {
-			t.Fatalf("missing detector %s", want)
+	want := []string{"HighWAPE", "BiasShift", "UnstableForecast", "LowSupport"}
+	for _, w := range want {
+		if !ids[w] {
+			t.Fatalf("missing detector %s in %v", w, ids)
 		}
+	}
+	for _, gone := range []string{"HighMAPE", "HighRMSE", "CoverageBreak"} {
+		if ids[gone] {
+			t.Fatalf("%s should not be a default detector", gone)
+		}
+	}
+	if len(cfg.Detectors) != 4 {
+		t.Fatalf("want 4 default detectors, got %d", len(cfg.Detectors))
+	}
+}
+
+func TestDefaultDetectorsTriad(t *testing.T) {
+	dets := config.DefaultDetectors()
+	if len(dets) != 4 {
+		t.Fatalf("len=%d", len(dets))
+	}
+	byID := map[string]config.DetectorConfig{}
+	for _, d := range dets {
+		byID[d.ID] = d
+	}
+	wape := byID["HighWAPE"]
+	if wape.Metric != "wape" || wape.Warning == nil || *wape.Warning != 0.30 || wape.Critical == nil || *wape.Critical != 0.45 {
+		t.Fatalf("HighWAPE=%+v", wape)
+	}
+	unst := byID["UnstableForecast"]
+	if unst.Metric != "stability" || unst.Warning == nil || *unst.Warning != 0.15 || unst.Critical == nil || *unst.Critical != 0.30 {
+		t.Fatalf("UnstableForecast=%+v", unst)
+	}
+	if unst.Direction != "above" {
+		t.Fatalf("UnstableForecast direction=%s", unst.Direction)
 	}
 }
 

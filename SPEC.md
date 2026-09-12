@@ -187,78 +187,71 @@ Permitir WAPE, RMSE e outras métricas sem hardcode de colunas/detectors. Config
 
 ## Contrato CSV `metrics_v2` (wide, backward compatible)
 Colunas estáveis: `run_id`, `entity_type`, `entity_id`, `n_actuals`, `generated_at`
-Métricas opcionais (float, vazio = ausente): `mape`, `bias`, `coverage_80`, `wape`, `rmse`, …  
+Métricas opcionais (float, vazio = ausente): `wape`, `bias`, `stability`, `mape`, `rmse`, `coverage_80`, …  
 Leitor ignora colunas desconhecidas; detectors só usam métricas que existirem.
 
-Compat: se CSV antigo só com mape/bias/coverage_80, continua funcionando com presets default.
+### `stability` (definição normativa)
+`stability` = forecast churn for the entity on that run: mean absolute relative change of the point forecast vs the previous origin for the same target horizon (fraction ≥0; **0 = perfectly stable**). Higher = worse. The warden does **NOT** compute it from y/yhat — the adopter’s batch writes the column (same as wape/bias). Synth emits a plausible `stability` column.
 
-## `warden.yaml` detectors
+Compat: CSV antigo sem `wape`/`stability` → HighWAPE / UnstableForecast no-op; BiasShift ainda dispara se `bias` presente.
+
+## `warden.yaml` detectors — defaults (logistics triad)
 ```yaml
 schema_version: 2
 detectors:
-  - id: HighMAPE
-    type: threshold
-    metric: mape
-    warning: 0.25
-    critical: 0.40
-    min_support: 30
   - id: HighWAPE
     type: threshold
     metric: wape
     warning: 0.30
     critical: 0.45
     min_support: 30
-  - id: HighRMSE
-    type: threshold
-    metric: rmse
-    warning: 10.0
-    critical: 20.0
-    min_support: 30
+    direction: above
   - id: BiasShift
     type: zscore   # also abs threshold
     metric: bias
     abs_warning: 0.15
     z_warning: 3.0
     min_support: 30
+  - id: UnstableForecast
+    type: threshold
+    metric: stability
+    warning: 0.15
+    critical: 0.30
+    min_support: 30
+    direction: above
   - id: LowSupport
     type: low_support
     min_support: 30
     severity: info
-  - id: CoverageBreak
-    type: threshold
-    metric: coverage_80
-    # invert: alert when BELOW threshold
-    direction: below
-    warning: 0.60
-    min_support: 30
 ```
-Default yaml = comportamento atual (mape/bias/coverage/low_support) para não quebrar demos.
+Optional examples (not defaults): HighMAPE, HighRMSE, CoverageBreak — see README.
 
 ## Baseline
-`baseline_stats` passa a ser long ou wide por metric: pelo menos mean/std por (entity, metric) para zscore. Synth gera baseline para mape e bias; wape/rmse se presentes.
+`baseline_stats` long por metric: mean/std por (entity, metric). Synth gera baseline para métricas presentes (incl. `stability`). UnstableForecast é threshold-only; baseline de stability é opcional.
 
 ## Synth `init`
-Incluir coluna `wape` e `rmse` sintéticos; Z3/Z7 doentes também em wape; rmse escalado coerente. HighWAPE pode disparar no mesmo run.
+Incluir `wape`, `bias`, `stability` (e opcionalmente mape/rmse/coverage_80). Z3/Z7 doentes em wape/bias/stability (ex. stability 0.35 / 0.20); zonas saudáveis ~0.05–0.10.
 
 ## Incident / CLI
-Sem mudança de UX; findings incluem metric name na evidence. Exit codes iguais.
+Sem mudança de UX; findings incluem metric name na evidence. Hint de UnstableForecast menciona churn / planning nervousness / freeze policy. Exit codes iguais.
 
 ## Testes
 - threshold above/below
 - zscore
-- CSV sem wape: HighWAPE no-op (sem finding)
-- CSV com wape doente: finding
+- CSV sem wape/stability: HighWAPE / UnstableForecast no-op
+- CSV com stability doente: UnstableForecast finding
+- default detectors = triad only
 - backward compat CSV v1
 - clobber fix preserved
 
 ## Docs
-README + SPEC.md atualizados; mencionar WAPE como default opinativo de logística.
+README + SPEC.md: “Recommended logistics triad: WAPE, bias, stability” + definição de stability.
 
 
 ### Implementation notes (Go)
 
 - `MetricRow.Metrics map[string]float64` — optional floats; `Metric(name) (float64, bool)`
 - Baseline long CSV: `entity_type,entity_id,metric,mean,std,window_days` (wide legacy still readable)
-- `warden.yaml` `schema_version: 2` with `detectors:` list; legacy `thresholds:` block still migrates to classic 4 detectors
-- Default detectors include HighMAPE / HighWAPE / HighRMSE / BiasShift / LowSupport / CoverageBreak
-- Synth `init` emits `wape` and `rmse`; Z3/Z7 sick on wape for demo findings
+- `warden.yaml` `schema_version: 2` with `detectors:` list; legacy `thresholds:` block still migrates to classic 4 detectors (HighMAPE/BiasShift/LowSupport/CoverageBreak)
+- Default detectors: HighWAPE / BiasShift / UnstableForecast / LowSupport
+- Synth `init` emits `wape`, `rmse`, `stability`; Z3/Z7 sick on wape + stability for demo findings

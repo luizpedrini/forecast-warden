@@ -12,18 +12,19 @@ import (
 var Zones = []string{"Z1", "Z2", "Z3", "Z4", "Z5", "Z6", "Z7", "Z8"}
 
 // SickProfiles intentionally sick zones on the latest run (demo / golden path).
-// Z3/Z7 are also sick on wape so HighWAPE can fire in demos.
+// Z3/Z7 are sick on wape, bias, and stability so the logistics triad can fire.
 var SickProfiles = map[string]struct {
 	MAPE       float64
 	Bias       float64
 	Coverage80 float64
 	WAPE       float64
 	RMSE       float64
+	Stability  float64
 	NActuals   int
 }{
-	"Z3": {MAPE: 0.42, Bias: 0.22, Coverage80: 0.55, WAPE: 0.48, RMSE: 22.0, NActuals: 80},
-	"Z7": {MAPE: 0.31, Bias: -0.18, Coverage80: 0.72, WAPE: 0.35, RMSE: 12.5, NActuals: 60},
-	"Z5": {MAPE: 0.12, Bias: 0.02, Coverage80: 0.81, WAPE: 0.14, RMSE: 4.0, NActuals: 12},
+	"Z3": {MAPE: 0.42, Bias: 0.22, Coverage80: 0.55, WAPE: 0.48, RMSE: 22.0, Stability: 0.35, NActuals: 80},
+	"Z7": {MAPE: 0.31, Bias: -0.18, Coverage80: 0.72, WAPE: 0.35, RMSE: 12.5, Stability: 0.20, NActuals: 60},
+	"Z5": {MAPE: 0.12, Bias: 0.02, Coverage80: 0.81, WAPE: 0.14, RMSE: 4.0, Stability: 0.08, NActuals: 12},
 }
 
 func GenerateMetrics(days int, endDate time.Time, seed int64) []models.MetricRow {
@@ -55,6 +56,7 @@ func GenerateMetrics(days int, endDate time.Time, seed int64) []models.MetricRow
 					row.SetMetric("coverage_80", p.Coverage80)
 					row.SetMetric("wape", p.WAPE)
 					row.SetMetric("rmse", p.RMSE)
+					row.SetMetric("stability", p.Stability)
 					rows = append(rows, row)
 					continue
 				}
@@ -71,6 +73,8 @@ func GenerateMetrics(days int, endDate time.Time, seed int64) []models.MetricRow
 			// WAPE tracks MAPE with a small volume-weight uplift; RMSE scaled ~40× mape.
 			wape := clamp(mape*1.05+rng.NormFloat64()*0.01, 0.05, 0.22)
 			rmse := clamp(mape*40+rng.NormFloat64()*0.5, 2.0, 9.0)
+			// Healthy stability: low forecast churn (~0.05–0.10).
+			stability := clamp(0.07+rng.NormFloat64()*0.015, 0.05, 0.10)
 			n := int(clamp(70+rng.NormFloat64()*15, 40, 120))
 			row := models.MetricRow{
 				RunID:       runID,
@@ -85,6 +89,7 @@ func GenerateMetrics(days int, endDate time.Time, seed int64) []models.MetricRow
 			row.SetMetric("coverage_80", round6(coverage))
 			row.SetMetric("wape", round6(wape))
 			row.SetMetric("rmse", round6(rmse))
+			row.SetMetric("stability", round6(stability))
 			rows = append(rows, row)
 		}
 	}

@@ -58,6 +58,9 @@ func SuggestHypotheses(findings []models.Finding) []models.Hypothesis {
 	if _, ok := codes["CoverageBreak"]; ok {
 		hyps = append(hyps, models.HypModelStale)
 	}
+	if _, ok := codes["UnstableForecast"]; ok {
+		hyps = append(hyps, models.HypModelStale, models.HypFeatureBreak)
+	}
 	if _, ok := codes["LowSupport"]; ok {
 		hyps = append(hyps, models.HypDataDelay)
 	}
