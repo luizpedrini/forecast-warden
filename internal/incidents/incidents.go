@@ -46,6 +46,12 @@ func SuggestHypotheses(findings []models.Finding) []models.Hypothesis {
 	if _, ok := codes["HighMAPE"]; ok {
 		hyps = append(hyps, models.HypDemandSpike, models.HypModelStale)
 	}
+	if _, ok := codes["HighWAPE"]; ok {
+		hyps = append(hyps, models.HypDemandSpike, models.HypModelStale)
+	}
+	if _, ok := codes["HighRMSE"]; ok {
+		hyps = append(hyps, models.HypModelStale)
+	}
 	if _, ok := codes["BiasShift"]; ok {
 		hyps = append(hyps, models.HypFeatureBreak, models.HypCalendar)
 	}
@@ -80,7 +86,8 @@ func SuggestAction(severity models.Severity, findings []models.Finding) models.S
 	}
 	_, bias := codes["BiasShift"]
 	_, mape := codes["HighMAPE"]
-	if bias && mape {
+	_, wape := codes["HighWAPE"]
+	if bias && (mape || wape) {
 		return models.ActionRetrain
 	}
 	return models.ActionInvestigate

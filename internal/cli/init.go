@@ -56,7 +56,7 @@ var initCmd = &cobra.Command{
 		if err := csvio.WriteBaseline(baselinePath, baselineRows); err != nil {
 			fail(fmt.Sprintf("write baseline: %v", err), 2)
 		}
-		fmt.Fprintf(Out, "Wrote %s (%d entities)\n", baselinePath, len(baselineRows))
+		fmt.Fprintf(Out, "Wrote %s (%d baseline rows)\n", baselinePath, len(baselineRows))
 
 		if err := os.MkdirAll(cfg.IncidentsDir, 0o755); err != nil {
 			fail(fmt.Sprintf("mkdir incidents: %v", err), 2)

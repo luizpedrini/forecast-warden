@@ -12,15 +12,18 @@ import (
 var Zones = []string{"Z1", "Z2", "Z3", "Z4", "Z5", "Z6", "Z7", "Z8"}
 
 // SickProfiles intentionally sick zones on the latest run (demo / golden path).
+// Z3/Z7 are also sick on wape so HighWAPE can fire in demos.
 var SickProfiles = map[string]struct {
 	MAPE       float64
 	Bias       float64
 	Coverage80 float64
+	WAPE       float64
+	RMSE       float64
 	NActuals   int
 }{
-	"Z3": {MAPE: 0.42, Bias: 0.22, Coverage80: 0.55, NActuals: 80},
-	"Z7": {MAPE: 0.31, Bias: -0.18, Coverage80: 0.72, NActuals: 60},
-	"Z5": {MAPE: 0.12, Bias: 0.02, Coverage80: 0.81, NActuals: 12},
+	"Z3": {MAPE: 0.42, Bias: 0.22, Coverage80: 0.55, WAPE: 0.48, RMSE: 22.0, NActuals: 80},
+	"Z7": {MAPE: 0.31, Bias: -0.18, Coverage80: 0.72, WAPE: 0.35, RMSE: 12.5, NActuals: 60},
+	"Z5": {MAPE: 0.12, Bias: 0.02, Coverage80: 0.81, WAPE: 0.14, RMSE: 4.0, NActuals: 12},
 }
 
 func GenerateMetrics(days int, endDate time.Time, seed int64) []models.MetricRow {
@@ -39,16 +42,20 @@ func GenerateMetrics(days int, endDate time.Time, seed int64) []models.MetricRow
 		for _, zone := range Zones {
 			if d == days-1 {
 				if p, ok := SickProfiles[zone]; ok {
-					rows = append(rows, models.MetricRow{
+					row := models.MetricRow{
 						RunID:       runID,
 						EntityType:  "zone",
 						EntityID:    zone,
-						MAPE:        p.MAPE,
-						Bias:        p.Bias,
-						Coverage80:  p.Coverage80,
 						NActuals:    p.NActuals,
 						GeneratedAt: generatedAt,
-					})
+						Metrics:     map[string]float64{},
+					}
+					row.SetMetric("mape", p.MAPE)
+					row.SetMetric("bias", p.Bias)
+					row.SetMetric("coverage_80", p.Coverage80)
+					row.SetMetric("wape", p.WAPE)
+					row.SetMetric("rmse", p.RMSE)
+					rows = append(rows, row)
 					continue
 				}
 			}
@@ -61,23 +68,30 @@ func GenerateMetrics(days int, endDate time.Time, seed int64) []models.MetricRow
 			}
 			bias := clamp(rng.NormFloat64()*biasSigma, -biasCap, biasCap)
 			coverage := clamp(0.82+rng.NormFloat64()*0.03, 0.70, 0.95)
+			// WAPE tracks MAPE with a small volume-weight uplift; RMSE scaled ~40× mape.
+			wape := clamp(mape*1.05+rng.NormFloat64()*0.01, 0.05, 0.22)
+			rmse := clamp(mape*40+rng.NormFloat64()*0.5, 2.0, 9.0)
 			n := int(clamp(70+rng.NormFloat64()*15, 40, 120))
-			rows = append(rows, models.MetricRow{
+			row := models.MetricRow{
 				RunID:       runID,
 				EntityType:  "zone",
 				EntityID:    zone,
-				MAPE:        round6(mape),
-				Bias:        round6(bias),
-				Coverage80:  round6(coverage),
 				NActuals:    n,
 				GeneratedAt: generatedAt,
-			})
+				Metrics:     map[string]float64{},
+			}
+			row.SetMetric("mape", round6(mape))
+			row.SetMetric("bias", round6(bias))
+			row.SetMetric("coverage_80", round6(coverage))
+			row.SetMetric("wape", round6(wape))
+			row.SetMetric("rmse", round6(rmse))
+			rows = append(rows, row)
 		}
 	}
 	return rows
 }
 
-func ComputeBaseline(metrics []models.MetricRow, windowDays int) []models.BaselineStats {
+func ComputeBaseline(metrics []models.MetricRow, windowDays int) []models.BaselineStat {
 	if windowDays <= 0 {
 		windowDays = 28
 	}
@@ -115,24 +129,48 @@ func ComputeBaseline(metrics []models.MetricRow, windowDays int) []models.Baseli
 		entityIDs = append(entityIDs, id)
 	}
 	sort.Strings(entityIDs)
-	out := make([]models.BaselineStats, 0, len(entityIDs))
+
+	// Collect metric names present in history.
+	metricSet := map[string]struct{}{}
+	for _, rows := range byEntity {
+		for _, r := range rows {
+			for k := range r.Metrics {
+				metricSet[k] = struct{}{}
+			}
+		}
+	}
+	metricNames := make([]string, 0, len(metricSet))
+	for k := range metricSet {
+		metricNames = append(metricNames, k)
+	}
+	sort.Strings(metricNames)
+
+	var out []models.BaselineStat
 	for _, entityID := range entityIDs {
 		rows := byEntity[entityID]
-		mapes := make([]float64, len(rows))
-		biases := make([]float64, len(rows))
-		for i, r := range rows {
-			mapes[i] = r.MAPE
-			biases[i] = r.Bias
+		et := "zone"
+		if len(rows) > 0 && rows[0].EntityType != "" {
+			et = rows[0].EntityType
 		}
-		out = append(out, models.BaselineStats{
-			EntityType: "zone",
-			EntityID:   entityID,
-			MAPEMean:   mean(mapes),
-			MAPEStd:    std(mapes),
-			BiasMean:   mean(biases),
-			BiasStd:    std(biases),
-			WindowDays: windowDays,
-		})
+		for _, metric := range metricNames {
+			vals := make([]float64, 0, len(rows))
+			for _, r := range rows {
+				if v, ok := r.Metric(metric); ok {
+					vals = append(vals, v)
+				}
+			}
+			if len(vals) == 0 {
+				continue
+			}
+			out = append(out, models.BaselineStat{
+				EntityType: et,
+				EntityID:   entityID,
+				Metric:     metric,
+				Mean:       mean(vals),
+				Std:        std(vals),
+				WindowDays: windowDays,
+			})
+		}
 	}
 	return out
 }

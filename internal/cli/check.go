@@ -72,7 +72,7 @@ var checkCmd = &cobra.Command{
 		if err != nil {
 			fail(fmt.Sprintf("baseline: %v", err), 2)
 		}
-		findings := detectors.RunAll(runRows, baseline, cfg.Thresholds)
+		findings := detectors.RunAll(runRows, baseline, cfg.Detectors)
 
 		if len(findings) > 0 {
 			w := tabwriter.NewWriter(Out, 0, 0, 2, ' ', 0)

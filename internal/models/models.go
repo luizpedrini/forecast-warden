@@ -63,25 +63,70 @@ const (
 	HypDataDelay    Hypothesis = "data_delay"
 )
 
+// MetricRow is a wide metrics_v2 row: stable identity columns plus optional
+// float metrics (mape, bias, coverage_80, wape, rmse, …). Absent metrics are
+// simply missing from Metrics — detectors that reference them no-op.
 type MetricRow struct {
-	RunID       string    `json:"run_id"`
-	EntityType  string    `json:"entity_type"`
-	EntityID    string    `json:"entity_id"`
-	MAPE        float64   `json:"mape"`
-	Bias        float64   `json:"bias"`
-	Coverage80  float64   `json:"coverage_80"`
-	NActuals    int       `json:"n_actuals"`
-	GeneratedAt time.Time `json:"generated_at"`
+	RunID       string             `json:"run_id"`
+	EntityType  string             `json:"entity_type"`
+	EntityID    string             `json:"entity_id"`
+	NActuals    int                `json:"n_actuals"`
+	GeneratedAt time.Time          `json:"generated_at"`
+	Metrics     map[string]float64 `json:"metrics"`
 }
 
-type BaselineStats struct {
+// Metric returns (value, true) if the named optional metric is present.
+func (r MetricRow) Metric(name string) (float64, bool) {
+	if r.Metrics == nil {
+		return 0, false
+	}
+	v, ok := r.Metrics[name]
+	return v, ok
+}
+
+// SetMetric stores an optional metric value.
+func (r *MetricRow) SetMetric(name string, value float64) {
+	if r.Metrics == nil {
+		r.Metrics = map[string]float64{}
+	}
+	r.Metrics[name] = value
+}
+
+// BaselineStat is mean/std for one (entity, metric) pair (long baseline).
+type BaselineStat struct {
 	EntityType string  `json:"entity_type"`
 	EntityID   string  `json:"entity_id"`
-	MAPEMean   float64 `json:"mape_mean"`
-	MAPEStd    float64 `json:"mape_std"`
-	BiasMean   float64 `json:"bias_mean"`
-	BiasStd    float64 `json:"bias_std"`
+	Metric     string  `json:"metric"`
+	Mean       float64 `json:"mean"`
+	Std        float64 `json:"std"`
 	WindowDays int     `json:"window_days"`
+}
+
+// BaselineIndex is entity_id → metric → BaselineStat.
+type BaselineIndex map[string]map[string]BaselineStat
+
+func (b BaselineIndex) Get(entityID, metric string) (BaselineStat, bool) {
+	if b == nil {
+		return BaselineStat{}, false
+	}
+	byMetric, ok := b[entityID]
+	if !ok {
+		return BaselineStat{}, false
+	}
+	s, ok := byMetric[metric]
+	return s, ok
+}
+
+func (b BaselineIndex) Put(s BaselineStat) {
+	if b == nil {
+		return
+	}
+	byMetric, ok := b[s.EntityID]
+	if !ok {
+		byMetric = map[string]BaselineStat{}
+		b[s.EntityID] = byMetric
+	}
+	byMetric[s.Metric] = s
 }
 
 type Finding struct {

@@ -1,6 +1,6 @@
 # forecast-warden — Spec mínima (fatia 1)
 
-**Status:** fatia 1 shipped (MIT) · **implementation: Go** (ported from Python; single binary)  
+**Status:** fatia 1 + pluggable metrics shipped (MIT) · **implementation: Go** (single binary)  
 **Escopo:** OSS genérico de logística / demand forecasting ops — zero dados ou IP de qualquer empresa  
 **Objetivo da fatia:** num sábado, ter um CLI que lê métricas sintéticas de um run de forecast, detecta anomalias simples e emite um **Forecast Incident** (spec) aprovável por humano.
 
@@ -169,3 +169,96 @@ Fatia 1 product contracts above remain normative. The runtime is **Go** (`github
 - Module layout: `cmd/warden` + `internal/{config,models,csvio,synthetic,detectors,incidents,cli}`
 - Tests: `go test ./...` (detectors, golden incident, CLI smoke)
 - Build: `go build -o warden ./cmd/warden`
+
+
+---
+
+## 15. Pluggable metrics (fatia)
+
+# forecast-warden — Spec: métricas pluggable (fatia)
+
+## Objetivo
+Permitir WAPE, RMSE e outras métricas sem hardcode de colunas/detectors. Config em `warden.yaml`; CSV wide com métricas opcionais.
+
+## Não-objetivos
+- Calcular métricas a partir de y/yhat raw
+- Feature store / long-format obrigatório
+- LLM
+
+## Contrato CSV `metrics_v2` (wide, backward compatible)
+Colunas estáveis: `run_id`, `entity_type`, `entity_id`, `n_actuals`, `generated_at`
+Métricas opcionais (float, vazio = ausente): `mape`, `bias`, `coverage_80`, `wape`, `rmse`, …  
+Leitor ignora colunas desconhecidas; detectors só usam métricas que existirem.
+
+Compat: se CSV antigo só com mape/bias/coverage_80, continua funcionando com presets default.
+
+## `warden.yaml` detectors
+```yaml
+schema_version: 2
+detectors:
+  - id: HighMAPE
+    type: threshold
+    metric: mape
+    warning: 0.25
+    critical: 0.40
+    min_support: 30
+  - id: HighWAPE
+    type: threshold
+    metric: wape
+    warning: 0.30
+    critical: 0.45
+    min_support: 30
+  - id: HighRMSE
+    type: threshold
+    metric: rmse
+    warning: 10.0
+    critical: 20.0
+    min_support: 30
+  - id: BiasShift
+    type: zscore   # also abs threshold
+    metric: bias
+    abs_warning: 0.15
+    z_warning: 3.0
+    min_support: 30
+  - id: LowSupport
+    type: low_support
+    min_support: 30
+    severity: info
+  - id: CoverageBreak
+    type: threshold
+    metric: coverage_80
+    # invert: alert when BELOW threshold
+    direction: below
+    warning: 0.60
+    min_support: 30
+```
+Default yaml = comportamento atual (mape/bias/coverage/low_support) para não quebrar demos.
+
+## Baseline
+`baseline_stats` passa a ser long ou wide por metric: pelo menos mean/std por (entity, metric) para zscore. Synth gera baseline para mape e bias; wape/rmse se presentes.
+
+## Synth `init`
+Incluir coluna `wape` e `rmse` sintéticos; Z3/Z7 doentes também em wape; rmse escalado coerente. HighWAPE pode disparar no mesmo run.
+
+## Incident / CLI
+Sem mudança de UX; findings incluem metric name na evidence. Exit codes iguais.
+
+## Testes
+- threshold above/below
+- zscore
+- CSV sem wape: HighWAPE no-op (sem finding)
+- CSV com wape doente: finding
+- backward compat CSV v1
+- clobber fix preserved
+
+## Docs
+README + SPEC.md atualizados; mencionar WAPE como default opinativo de logística.
+
+
+### Implementation notes (Go)
+
+- `MetricRow.Metrics map[string]float64` — optional floats; `Metric(name) (float64, bool)`
+- Baseline long CSV: `entity_type,entity_id,metric,mean,std,window_days` (wide legacy still readable)
+- `warden.yaml` `schema_version: 2` with `detectors:` list; legacy `thresholds:` block still migrates to classic 4 detectors
+- Default detectors include HighMAPE / HighWAPE / HighRMSE / BiasShift / LowSupport / CoverageBreak
+- Synth `init` emits `wape` and `rmse`; Z3/Z7 sick on wape for demo findings
