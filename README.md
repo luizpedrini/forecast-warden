@@ -2,7 +2,9 @@
 
 **Rule-based CLI for forecast pipeline ops:** synthetic metrics → detectors → Forecast Incident (markdown + JSON) → human resolve.
 
-MIT · Python 3.11+ · No LLM · No UI · No real company data.
+MIT · **Go** (single static binary) · No LLM · No UI · No real company data.
+
+> **Language decision:** fatia 1 originally shipped in Python; ported to **Go** for a single distributable binary and easier ops/adoption in CI and on-call laptops (no venv/pip). Product contracts (CSV, detectors, incidents, exit codes) are unchanged.
 
 ## Problem
 
@@ -14,21 +16,20 @@ Forecast teams invest in *models* and under-invest in *cycle management*: drift,
 2. If any finding ≥ `warning`: an `open` Forecast Incident is written
 3. Weekly triage (15 min): humans review `open` incidents
 4. **Gate:** promote / change config only after critical incidents are `resolved` or `accepted-risk`
-5. Close the loop with `warden resolve <id> --note "..."` 
+5. Close the loop with `warden resolve <id> --note "..."`
 
 ## Quickstart (5-minute demo)
 
 ```bash
 git clone https://github.com/luizpedrini/forecast-warden.git
 cd forecast-warden
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+go build -o warden ./cmd/warden
 
-warden init          # config + ~14d synthetic zone metrics (some sick) + baseline
-warden check         # writes ≥1 incident under incidents/ (exit 2 if critical)
-warden list
-warden show <id>     # use id from list, e.g. fw-20260912-xxxx
-warden resolve <id> --note "reviewed; hold promotion until retune"
+./warden init          # config + ~14d synthetic zone metrics (some sick) + baseline
+./warden check         # writes ≥1 incident under incidents/ (exit 2 if critical)
+./warden list
+./warden show <id>     # use id from list, e.g. fw-20260912-xxxx
+./warden resolve <id> --note "reviewed; hold promotion until retune"
 ```
 
 Exit codes (CI-friendly): `0` ok · `1` warning · `2` critical.
@@ -72,9 +73,13 @@ See [SPEC.md](SPEC.md) for the full fatia-1 contract.
 ## Develop
 
 ```bash
-pip install -e ".[dev]"
-pytest -q
+go test ./...
+go build -o warden ./cmd/warden
 ```
+
+## Changelog
+
+- **0.1.0 (Go rewrite):** Port fatia 1 from Python to Go. Same detectors, CSV/incident contracts, and exit codes. Python package removed; use the `warden` binary.
 
 ## License
 
