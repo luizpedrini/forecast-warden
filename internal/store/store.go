@@ -38,6 +38,9 @@ type Store interface {
 	Close() error
 	SaveIncident(ctx context.Context, incident models.Incident) error
 	GetIncident(ctx context.Context, id string) (models.Incident, error)
+	// GetIncidentByRunID retrieves the incident for a given run_id.
+	// Returns ErrNotFound if no incident exists for that run.
+	GetIncidentByRunID(ctx context.Context, runID string) (models.Incident, error)
 	ListIncidents(ctx context.Context, filter ListFilter) ([]models.Incident, error)
 	UpdateStatus(ctx context.Context, id, status, note string) error
 }

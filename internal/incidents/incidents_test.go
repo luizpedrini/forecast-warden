@@ -214,3 +214,175 @@ func abs(x float64) float64 {
 	}
 	return x
 }
+
+func TestStableIncidentIDFromRunID(t *testing.T) {
+	// Same runID should always produce same incident ID
+	runID := "2026-09-12"
+	id1 := incidents.MakeIncidentID(runID)
+	id2 := incidents.MakeIncidentID(runID)
+	if id1 != id2 {
+		t.Fatalf("IDs should be identical for same runID: %s vs %s", id1, id2)
+	}
+	if id1 != "fw-2026-09-12" {
+		t.Fatalf("expected fw-2026-09-12, got %s", id1)
+	}
+}
+
+func TestSanitizeRunID(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"2026-09-12", "2026-09-12"},
+		{"2026_09_12", "2026_09_12"},
+		{"run/2026-09-12", "run_2026-09-12"},
+		{"run:2026", "run_2026"},
+		{"my run", "my_run"},
+		{"RUN-123-ABC", "RUN-123-ABC"},
+	}
+	for _, tc := range tests {
+		got := incidents.SanitizeRunID(tc.input)
+		if got != tc.expected {
+			t.Errorf("SanitizeRunID(%q) = %q, want %q", tc.input, got, tc.expected)
+		}
+	}
+}
+
+func TestIncidentIDIndependentOfFindings(t *testing.T) {
+	// ID should be stable regardless of findings content
+	runID := "2026-09-12"
+	findings1 := []models.Finding{
+		{Code: "HighWAPE", Severity: models.SeverityCritical, EntityID: "Z3"},
+	}
+	findings2 := []models.Finding{
+		{Code: "BiasShift", Severity: models.SeverityWarning, EntityID: "Z7"},
+		{Code: "LowSupport", Severity: models.SeverityInfo, EntityID: "Z5"},
+	}
+
+	inc1 := incidents.BuildIncident(runID, findings1, time.Time{})
+	inc2 := incidents.BuildIncident(runID, findings2, time.Time{})
+
+	if inc1 == nil || inc2 == nil {
+		// inc2 might be nil since BiasShift/LowSupport alone might not trigger
+		if inc1 != nil {
+			// Just check inc1 ID is stable
+			id := incidents.MakeIncidentID(runID)
+			if inc1.ID != id {
+				t.Fatalf("incident ID mismatch: %s vs %s", inc1.ID, id)
+			}
+		}
+		return
+	}
+
+	if inc1.ID != inc2.ID {
+		t.Fatalf("IDs should be same for same runID regardless of findings: %s vs %s", inc1.ID, inc2.ID)
+	}
+}
+
+func TestUpdateIncidentInPlace(t *testing.T) {
+	existing := &models.Incident{
+		ID:        "fw-2026-09-12",
+		RunID:     "2026-09-12",
+		Status:    models.StatusOpen,
+		Severity:  models.SeverityWarning,
+		CreatedAt: time.Date(2026, 9, 12, 6, 0, 0, 0, time.UTC),
+		Note:      func() *string { s := "old note"; return &s }(),
+		History: []models.HistoryEvent{
+			{Timestamp: time.Date(2026, 9, 12, 6, 0, 0, 0, time.UTC), Event: "created", Status: models.StatusOpen, Severity: models.SeverityWarning},
+		},
+	}
+	newInc := &models.Incident{
+		ID:        "fw-2026-09-12",
+		RunID:     "2026-09-12",
+		Status:    models.StatusOpen,
+		Severity:  models.SeverityCritical,
+		CreatedAt: time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC), // Different time
+		Findings: []models.Finding{
+			{Code: "HighWAPE", Severity: models.SeverityCritical, EntityID: "Z3"},
+		},
+	}
+
+	result := incidents.UpdateIncidentInPlace(existing, newInc)
+
+	// Should preserve original createdAt
+	if !result.CreatedAt.Equal(existing.CreatedAt) {
+		t.Fatalf("createdAt should be preserved: got %v, want %v", result.CreatedAt, existing.CreatedAt)
+	}
+
+	// Should preserve note
+	if result.Note == nil || *result.Note != "old note" {
+		t.Fatalf("note should be preserved: got %v", result.Note)
+	}
+
+	// Should update severity
+	if result.Severity != models.SeverityCritical {
+		t.Fatalf("severity should be updated: got %v", result.Severity)
+	}
+
+	// History should have original + update event
+	if len(result.History) != 2 {
+		t.Fatalf("expected 2 history events, got %d", len(result.History))
+	}
+	if result.History[1].Event != "updated" {
+		t.Fatalf("expected 'updated' event, got %s", result.History[1].Event)
+	}
+}
+
+func TestReopenIncident(t *testing.T) {
+	resolved := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
+	existing := &models.Incident{
+		ID:         "fw-2026-09-12",
+		RunID:      "2026-09-12",
+		Status:     models.StatusResolved,
+		Severity:   models.SeverityWarning,
+		CreatedAt:  time.Date(2026, 9, 12, 6, 0, 0, 0, time.UTC),
+		Note:       func() *string { s := "resolved note"; return &s }(),
+		ResolvedAt: &resolved,
+		History: []models.HistoryEvent{
+			{Timestamp: time.Date(2026, 9, 12, 6, 0, 0, 0, time.UTC), Event: "created", Status: models.StatusOpen, Severity: models.SeverityWarning},
+			{Timestamp: resolved, Event: "resolved", Status: models.StatusResolved, Severity: models.SeverityWarning, Note: "resolved note"},
+		},
+	}
+	newInc := &models.Incident{
+		ID:        "fw-2026-09-12",
+		RunID:     "2026-09-12",
+		Status:    models.StatusOpen,
+		Severity:  models.SeverityCritical,
+		CreatedAt: time.Date(2026, 9, 12, 14, 0, 0, 0, time.UTC),
+		Findings: []models.Finding{
+			{Code: "HighWAPE", Severity: models.SeverityCritical, EntityID: "Z3"},
+		},
+	}
+
+	result := incidents.ReopenIncident(existing, newInc)
+
+	// Should preserve original createdAt
+	if !result.CreatedAt.Equal(existing.CreatedAt) {
+		t.Fatalf("createdAt should be preserved: got %v, want %v", result.CreatedAt, existing.CreatedAt)
+	}
+
+	// Status should be open
+	if result.Status != models.StatusOpen {
+		t.Fatalf("status should be open: got %v", result.Status)
+	}
+
+	// Note and ResolvedAt should be cleared
+	if result.Note != nil {
+		t.Fatalf("note should be nil after reopen: got %v", result.Note)
+	}
+	if result.ResolvedAt != nil {
+		t.Fatalf("resolvedAt should be nil after reopen: got %v", result.ResolvedAt)
+	}
+
+	// History should have original events + reopen event
+	if len(result.History) != 3 {
+		t.Fatalf("expected 3 history events, got %d", len(result.History))
+	}
+	if result.History[2].Event != "reopened" {
+		t.Fatalf("expected 'reopened' event, got %s", result.History[2].Event)
+	}
+	// Reopen event should mention the prior resolved status
+	if !contains(result.History[2].Note, "reopened from resolved") {
+		t.Fatalf("reopen note should mention prior status: %s", result.History[2].Note)
+	}
+}

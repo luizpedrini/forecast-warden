@@ -34,6 +34,19 @@ func (s *fileStore) GetIncident(_ context.Context, id string) (models.Incident, 
 	return *inc, nil
 }
 
+func (s *fileStore) GetIncidentByRunID(_ context.Context, runID string) (models.Incident, error) {
+	all, err := incidents.ListIncidents(s.incidentsDir, nil)
+	if err != nil {
+		return models.Incident{}, err
+	}
+	for _, inc := range all {
+		if inc.RunID == runID {
+			return inc, nil
+		}
+	}
+	return models.Incident{}, ErrNotFound
+}
+
 func (s *fileStore) ListIncidents(_ context.Context, filter ListFilter) ([]models.Incident, error) {
 	return incidents.ListIncidents(s.incidentsDir, filter.Status)
 }

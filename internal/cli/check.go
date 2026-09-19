@@ -89,8 +89,8 @@ var checkCmd = &cobra.Command{
 			fmt.Fprintln(Out, "No findings.")
 		}
 
-		incident := incidents.BuildIncident(target, findings, time.Time{})
-		if incident == nil {
+		newIncident := incidents.BuildIncident(target, findings, time.Time{})
+		if newIncident == nil {
 			fmt.Fprintln(Out, "No incident opened (info-only or clean).")
 			exitWithSeverity("")
 		}
@@ -102,16 +102,56 @@ var checkCmd = &cobra.Command{
 		defer st.Close()
 
 		ctx := context.Background()
-		existing, err := st.GetIncident(ctx, incident.ID)
-		if err != nil && !errors.Is(err, store.ErrNotFound) {
+		existing, err := st.GetIncident(ctx, newIncident.ID)
+		notFound := errors.Is(err, store.ErrNotFound)
+		if err != nil && !notFound {
 			fail(fmt.Sprintf("load incident: %v", err), 2)
 		}
-		if err == nil && models.IsTerminalStatus(existing.Status) {
-			fmt.Fprintf(Out, "incident %s already %s; not overwriting\n", existing.ID, existing.Status)
-			exitWithSeverity(string(incident.Severity))
+
+		var toSave *models.Incident
+		var action string
+
+		if notFound {
+			// Brand new incident
+			newIncident.History = []models.HistoryEvent{{
+				Timestamp: newIncident.CreatedAt,
+				Event:     "created",
+				Status:    newIncident.Status,
+				Severity:  newIncident.Severity,
+			}}
+			toSave = newIncident
+			action = "created"
+		} else {
+			// Existing incident found
+			switch existing.Status {
+			case models.StatusOpen:
+				// Update in-place: preserve createdAt & history, update findings/severity/etc
+				toSave = incidents.UpdateIncidentInPlace(&existing, newIncident)
+				action = "updated"
+			case models.StatusResolved:
+				// Reopen only if new severity >= critical
+				if newIncident.Severity == models.SeverityCritical {
+					toSave = incidents.ReopenIncident(&existing, newIncident)
+					action = "reopened"
+				} else {
+					fmt.Fprintf(Out, "incident %s resolved; new severity %s (not critical) — not reopening\n",
+						existing.ID, newIncident.Severity)
+					exitWithSeverity(string(newIncident.Severity))
+				}
+			case models.StatusAcceptedRisk, models.StatusWontfix:
+				// Never reopen terminal acceptance statuses
+				fmt.Fprintf(ErrOut, "incident %s is %s; gate still passes but findings exist (severity %s)\n",
+					existing.ID, existing.Status, newIncident.Severity)
+				fmt.Fprintf(Out, "incident %s already %s; not modifying\n", existing.ID, existing.Status)
+				exitWithSeverity(string(newIncident.Severity))
+			default:
+				// Unknown status, treat as open
+				toSave = incidents.UpdateIncidentInPlace(&existing, newIncident)
+				action = "updated"
+			}
 		}
 
-		if err := st.SaveIncident(ctx, *incident); err != nil {
+		if err := st.SaveIncident(ctx, *toSave); err != nil {
 			fail(fmt.Sprintf("save incident: %v", err), 2)
 		}
 
@@ -121,17 +161,17 @@ var checkCmd = &cobra.Command{
 		}
 		extra := ""
 		if cfg.Store.Driver == "sqlite" && cfg.StoreWriteMarkdown() {
-			mdPath, _ := incidents.IncidentPaths(cfg.IncidentsDir, incident)
+			mdPath, _ := incidents.IncidentPaths(cfg.IncidentsDir, toSave)
 			extra = fmt.Sprintf(" + %s", filepath.Base(mdPath))
 		} else if cfg.Store.Driver == "file" {
-			mdPath, jsonPath := incidents.IncidentPaths(cfg.IncidentsDir, incident)
+			mdPath, jsonPath := incidents.IncidentPaths(cfg.IncidentsDir, toSave)
 			extra = fmt.Sprintf(" → %s + %s", filepath.Base(mdPath), filepath.Base(jsonPath))
-			fmt.Fprintf(Out, "Incident %s (%s)%s\n", incident.ID, incident.Severity, extra)
-			exitWithSeverity(string(incident.Severity))
+			fmt.Fprintf(Out, "Incident %s %s (%s)%s\n", toSave.ID, action, toSave.Severity, extra)
+			exitWithSeverity(string(toSave.Severity))
 		}
-		fmt.Fprintf(Out, "Incident %s (%s) → %s%s\n",
-			incident.ID, incident.Severity, where, extra)
-		exitWithSeverity(string(incident.Severity))
+		fmt.Fprintf(Out, "Incident %s %s (%s) → %s%s\n",
+			toSave.ID, action, toSave.Severity, where, extra)
+		exitWithSeverity(string(toSave.Severity))
 	},
 }
 
