@@ -374,3 +374,56 @@ sqlite temp file: save/get/list/update + clobber + findings roundtrip; CLI smoke
 - Prefer pure Go `modernc.org/sqlite` (no CGO)
 - Config block `store:` on `WardenConfig`; `StoreWriteMarkdown()` defaults true when omitted
 - Version **0.6.0**
+
+
+---
+
+## 18. Stable incident ID + gate (fatia Norte A)
+
+## Objetivo
+1. Incident ID estável: `fw-{run_id}` (run_id sanitizado para filesystem). Mesmo run → mesmo ID.
+2. Re-check atualiza incident em open (in-place); reabre resolved se severidade ≥ critical; nunca reabre `accepted-risk`/`wontfix`.
+3. Comando `warden gate` (alias `can-promote`): exit 0 = promote ok (sem critical open); exit 2 = bloqueado.
+
+## Comportamento do check
+- **Novo:** cria incident com history[0] = created
+- **Open existente:** atualiza findings/severity em place; preserva createdAt/notes; adiciona history event "updated"
+- **Resolved + critical:** reabre (status → open); adiciona history event "reopened" com nota do status anterior
+- **Resolved + warning:** não reabre; log "not reopening" + exit com severity
+- **accepted-risk/wontfix:** nunca reabre; log em stderr que gate ainda passa mas findings existem
+
+## warden gate (can-promote)
+```
+warden gate [--config warden.yaml]
+warden can-promote      # alias
+```
+- Exit 0 (PASS): nenhum incident critical com status `open`
+- Exit 2 (BLOCK): pelo menos um incident critical open
+- Exit 1 NÃO é usado (warnings não bloqueiam)
+
+## Incident.History
+```go
+type HistoryEvent struct {
+    Timestamp time.Time
+    Event     string         // "created", "updated", "resolved", "reopened"
+    Status    IncidentStatus
+    Severity  Severity
+    Note      string         // contexto opcional
+}
+```
+Preservado em JSON e disponível para auditoria.
+
+## Testes
+- Stable ID para mesmo run_id
+- Update in-place preserva createdAt/history
+- Reopen: resolved+critical sim; resolved+warning não; accepted-risk/wontfix nunca
+- Gate: exit 0 sem open critical; exit 2 com open critical; alias can-promote funciona
+
+## Exemplo CI
+Ver `examples/gate-example.yml` e `.github/workflows/gate-example.yml`.
+
+### Implementation notes
+- `MakeIncidentID(runID)` → `fw-{sanitized_run_id}` (alphanumeric, hyphen, underscore)
+- `UpdateIncidentInPlace`, `ReopenIncident` em `internal/incidents`
+- `internal/cli/gate.go` com alias `can-promote`
+- Version **0.7.0**

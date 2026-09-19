@@ -30,7 +30,7 @@ go build -o warden ./cmd/warden
 ./warden init          # config + data/ + ~14d synthetic metrics (some sick) + baseline
 ./warden check         # persists ≥1 incident to SQLite (and incidents/*.md); exit 2 if critical
 ./warden list          # reads from store
-./warden show <id>     # use id from list, e.g. fw-20260912-xxxx
+./warden show <id>     # use id from list, e.g. fw-2026-09-12
 ./warden investigate <id>          # rule-based playbook (stdout)
 ./warden investigate <id> --write  # also saves incidents/<id>.investigate.md
 ./warden investigate <id> --llm    # optional LLM synthesis (needs API key)
@@ -120,9 +120,27 @@ warden list [--status open|resolved|accepted-risk|wontfix]
 warden show <id>
 warden investigate <id> [--write] [--llm] [--provider openai|anthropic]
 warden resolve <id> --note "..." [--status resolved|accepted-risk|wontfix]
+warden gate                           # alias: can-promote
 ```
 
 `investigate` always builds the **rule-based** playbook first (templates per detector + combo hints). Attack order: UnstableForecast → BiasShift → HighWAPE → other thresholds → LowSupport last. No warehouse/SQL — only generic “look outside warden” guidance.
+
+### Promotion gate (`warden gate` / `can-promote`)
+
+```bash
+./warden gate        # exit 0 = promote ok, exit 2 = blocked by critical open incident
+./warden can-promote # alias for gate
+```
+
+The gate command checks if model promotion is allowed:
+- **Exit 0 (PASS):** No critical-severity incident is currently `open` — safe to promote
+- **Exit 2 (BLOCK):** At least one critical-severity incident is `open` — promotion blocked
+
+**Important:** Exit code 1 is NOT used by the gate command. Warnings alone do not block promotion.
+
+Incidents with terminal statuses (`resolved`, `accepted-risk`, `wontfix`) do not block the gate.
+
+See `examples/gate-example.yml` or `.github/workflows/gate-example.yml` for CI integration examples.
 
 ### Optional `--llm` enrichment
 
@@ -162,6 +180,7 @@ go build -o warden ./cmd/warden
 
 ## Changelog
 
+- **0.7.0:** Stable incident IDs (`fw-{run_id}`) — same run always produces same ID. In-place update when open; reopen if resolved + critical; `accepted-risk`/`wontfix` never reopen. New `warden gate` command (alias `can-promote`): exit 0 = promote ok, exit 2 = blocked by critical open. History field preserves state changes across updates/reopens.
 - **0.6.0:** Pluggable `internal/store` — SQLite default (`modernc.org/sqlite`), legacy `file` driver, postgres stub. `warden.yaml` `store:` block (`driver` / `dsn` / `write_markdown`). CLI check/list/show/resolve/investigate use Store; init creates data dir; sqlite file on first check.
 - **0.5.0:** `warden investigate --llm` — optional LLM enrichment (`## LLM synthesis`) via OpenAI/Anthropic (stdlib HTTP, env keys). Rule-based playbook remains source of truth; LLM failure → stderr warning + rule-based fallback (exit 0).
 - **0.4.0:** `warden investigate <id>` — rule-based investigation playbook (attack order, per-finding questions, 15-min checklist, suggested resolve decision, ready-made `--note`). `--write` → `incidents/<id>.investigate.md`. Ritual: check → list → show → **investigate** → resolve.

@@ -137,6 +137,15 @@ type Finding struct {
 	Hint     string         `json:"hint"`
 }
 
+// HistoryEvent records a state change in an incident's lifecycle.
+type HistoryEvent struct {
+	Timestamp time.Time      `json:"timestamp"`
+	Event     string         `json:"event"` // "created", "updated", "resolved", "reopened"
+	Status    IncidentStatus `json:"status"`
+	Severity  Severity       `json:"severity"`
+	Note      string         `json:"note,omitempty"`
+}
+
 type Incident struct {
 	ID              string          `json:"id"`
 	RunID           string          `json:"run_id"`
@@ -150,4 +159,7 @@ type Incident struct {
 	SuggestedAction SuggestedAction `json:"suggested_action"`
 	Note            *string         `json:"note"`
 	ResolvedAt      *time.Time      `json:"resolved_at"`
+	// History preserves state changes across updates and reopens.
+	// Appended to on each significant state change.
+	History []HistoryEvent `json:"history,omitempty"`
 }

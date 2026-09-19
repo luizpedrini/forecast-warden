@@ -201,6 +201,26 @@ func (s *sqliteStore) GetIncident(ctx context.Context, id string) (models.Incide
 	return models.Incident{}, ErrNotFound
 }
 
+func (s *sqliteStore) GetIncidentByRunID(ctx context.Context, runID string) (models.Incident, error) {
+	row := s.db.QueryRowContext(ctx, `
+SELECT id, run_id, status, severity, entities, detector_codes,
+       suggested_action, note, created_at, resolved_at, hypotheses, raw_json
+FROM incidents WHERE run_id = ?`, runID)
+	inc, err := scanIncident(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return models.Incident{}, ErrNotFound
+		}
+		return models.Incident{}, err
+	}
+	findings, err := s.loadFindings(ctx, inc.ID)
+	if err != nil {
+		return models.Incident{}, err
+	}
+	inc.Findings = findings
+	return inc, nil
+}
+
 func (s *sqliteStore) getByExactID(ctx context.Context, id string) (models.Incident, error) {
 	row := s.db.QueryRowContext(ctx, `
 SELECT id, run_id, status, severity, entities, detector_codes,

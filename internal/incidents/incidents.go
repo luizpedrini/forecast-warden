@@ -1,8 +1,6 @@
 package incidents
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -96,16 +94,26 @@ func SuggestAction(severity models.Severity, findings []models.Finding) models.S
 	return models.ActionInvestigate
 }
 
-func MakeIncidentID(runID string, findings []models.Finding) string {
-	compact := strings.ReplaceAll(runID, "-", "")
-	parts := make([]string, 0, len(findings))
-	for _, f := range findings {
-		parts = append(parts, fmt.Sprintf("%s:%s:%s", f.Code, f.EntityID, f.Severity))
+// SanitizeRunID normalizes a run_id for use in incident IDs and file paths.
+// It keeps alphanumerics, hyphens, and underscores; replaces other chars with underscore.
+func SanitizeRunID(runID string) string {
+	var sb strings.Builder
+	sb.Grow(len(runID))
+	for _, r := range runID {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			sb.WriteRune(r)
+		} else {
+			sb.WriteRune('_')
+		}
 	}
-	sort.Strings(parts)
-	sum := sha1.Sum([]byte(strings.Join(parts, "|")))
-	short := hex.EncodeToString(sum[:])[:4]
-	return fmt.Sprintf("fw-%s-%s", compact, short)
+	return sb.String()
+}
+
+// MakeIncidentID returns a stable incident ID based solely on run_id.
+// Format: fw-{sanitized_run_id}
+// This ensures the same run always maps to the same incident, allowing in-place updates.
+func MakeIncidentID(runID string) string {
+	return fmt.Sprintf("fw-%s", SanitizeRunID(runID))
 }
 
 func BuildIncident(runID string, findings []models.Finding, createdAt time.Time) *models.Incident {
@@ -134,7 +142,7 @@ func BuildIncident(runID string, findings []models.Finding, createdAt time.Time)
 	}
 	sort.Strings(codes)
 	return &models.Incident{
-		ID:              MakeIncidentID(runID, action),
+		ID:              MakeIncidentID(runID),
 		RunID:           runID,
 		Status:          models.StatusOpen,
 		Severity:        severity,
@@ -150,9 +158,8 @@ func BuildIncident(runID string, findings []models.Finding, createdAt time.Time)
 }
 
 func IncidentPaths(incidentsDir string, incident *models.Incident) (mdPath, jsonPath string) {
-	parts := strings.Split(incident.ID, "-")
-	short := parts[len(parts)-1]
-	stem := fmt.Sprintf("%s__%s", incident.RunID, short)
+	// Use incident ID directly as stem (already includes sanitized run_id)
+	stem := incident.ID
 	return filepath.Join(incidentsDir, stem+".md"), filepath.Join(incidentsDir, stem+".json")
 }
 
@@ -346,4 +353,60 @@ func ResolveIncident(incidentsDir, incidentID, note string, status models.Incide
 		return nil, err
 	}
 	return inc, nil
+}
+
+// UpdateIncidentInPlace updates an existing open incident with new findings.
+// Preserves: createdAt, history. Updates: findings, severity, entities, codes, hypotheses, action.
+func UpdateIncidentInPlace(existing, new *models.Incident) *models.Incident {
+	now := time.Now().UTC()
+
+	// Start with the new incident data but preserve identity and history
+	result := *new
+	result.CreatedAt = existing.CreatedAt
+	result.Note = existing.Note
+	result.ResolvedAt = existing.ResolvedAt
+
+	// Preserve and extend history
+	result.History = append([]models.HistoryEvent(nil), existing.History...)
+	result.History = append(result.History, models.HistoryEvent{
+		Timestamp: now,
+		Event:     "updated",
+		Status:    result.Status,
+		Severity:  result.Severity,
+	})
+
+	return &result
+}
+
+// ReopenIncident reopens a resolved incident with new critical findings.
+// Preserves: createdAt, full history including resolution. Updates: status to open, new findings/severity.
+func ReopenIncident(existing, new *models.Incident) *models.Incident {
+	now := time.Now().UTC()
+
+	// Start with the new incident data but preserve identity and history
+	result := *new
+	result.CreatedAt = existing.CreatedAt
+	result.Status = models.StatusOpen
+
+	// Preserve and extend history, including the prior resolution
+	result.History = append([]models.HistoryEvent(nil), existing.History...)
+
+	// Record the reopen event with context from the old resolution
+	oldNote := ""
+	if existing.Note != nil {
+		oldNote = *existing.Note
+	}
+	result.History = append(result.History, models.HistoryEvent{
+		Timestamp: now,
+		Event:     "reopened",
+		Status:    result.Status,
+		Severity:  result.Severity,
+		Note:      fmt.Sprintf("reopened from %s (was: %s)", existing.Status, oldNote),
+	})
+
+	// Clear the resolved state but keep notes in history
+	result.Note = nil
+	result.ResolvedAt = nil
+
+	return &result
 }

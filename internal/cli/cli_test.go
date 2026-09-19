@@ -95,7 +95,9 @@ func runCLIFull(t *testing.T, dir string, args ...string) (stdout, stderr string
 	return stdout, stderr, code
 }
 
-var incidentIDRe = regexp.MustCompile(`fw-\d{8}-[0-9a-f]{4}`)
+// Matches the new stable incident ID format: fw-{run_id}
+// e.g. fw-2026-09-12 for run_id "2026-09-12"
+var incidentIDRe = regexp.MustCompile(`fw-\d{4}-\d{2}-\d{2}`)
 
 func firstIncidentID(s string) string {
 	return incidentIDRe.FindString(s)
@@ -175,7 +177,8 @@ func TestInitCheckListShowResolve(t *testing.T) {
 	}
 }
 
-func TestCheckDoesNotClobberResolvedIncident(t *testing.T) {
+func TestCheckReopensResolvedIfCritical(t *testing.T) {
+	// New behavior: resolved + critical severity → reopen
 	dir := t.TempDir()
 	out, code := runCLI(t, dir, "init")
 	if code != 0 {
@@ -201,27 +204,23 @@ func TestCheckDoesNotClobberResolvedIncident(t *testing.T) {
 		t.Fatalf("resolve exit=%d out=%s", code, out)
 	}
 
+	// Second check with critical findings should REOPEN (not skip)
 	out, code = runCLI(t, dir, "check")
 	if code != 2 {
-		t.Fatalf("second check exit=%d (want 2 from findings) out=%s", code, out)
+		t.Fatalf("second check exit=%d (want 2 from critical findings) out=%s", code, out)
 	}
-	if !strings.Contains(out, "already resolved") || !strings.Contains(out, "not overwriting") {
-		t.Fatalf("expected skip-overwrite message, got: %s", out)
+	// Should show "reopened" in output
+	if !strings.Contains(out, "reopened") {
+		t.Fatalf("expected 'reopened' in output for critical findings after resolve, got: %s", out)
 	}
 
-	out, code = runCLI(t, dir, "list", "--status", "resolved")
-	if code != 0 {
-		t.Fatalf("list resolved exit=%d out=%s", code, out)
-	}
-	if !strings.Contains(out, incidentID) || !strings.Contains(out, "resolved") {
-		t.Fatalf("status must remain resolved: %s", out)
-	}
+	// After reopen, incident should be open again
 	out, code = runCLI(t, dir, "list", "--status", "open")
 	if code != 0 {
-		t.Fatalf("list open exit=%d", code)
+		t.Fatalf("list open exit=%d out=%s", code, out)
 	}
-	if strings.Contains(out, incidentID) {
-		t.Fatalf("incident must not be open after clobber skip: %s", out)
+	if !strings.Contains(out, incidentID) {
+		t.Fatalf("incident should be open after reopen: %s", out)
 	}
 }
 
@@ -317,6 +316,287 @@ func TestInvestigateLLMFallbackWithoutKey(t *testing.T) {
 	}
 	if strings.Contains(stdout, "## LLM synthesis") {
 		t.Fatal("must not include LLM synthesis when key missing")
+	}
+}
+
+func TestAcceptedRiskNeverReopens(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("first check exit=%d (want 2) out=%s", code, out)
+	}
+	incidentID := firstIncidentID(out)
+	if incidentID == "" {
+		t.Fatalf("missing id: %s", out)
+	}
+
+	// Mark as accepted-risk (terminal status)
+	out, code = runCLI(t, dir, "resolve", incidentID, "--note", "accepted risk for now", "--status", "accepted-risk")
+	if code != 0 {
+		t.Fatalf("resolve accepted-risk exit=%d out=%s", code, out)
+	}
+
+	// Second check should NOT reopen accepted-risk even with critical findings
+	_, stderr, code := runCLIFull(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("check exit=%d (want 2 from findings severity)", code)
+	}
+	// Should mention it's not modifying
+	if !strings.Contains(stderr, "accepted-risk") || !strings.Contains(stderr, "gate still passes") {
+		t.Logf("stderr: %s", stderr)
+	}
+
+	// Incident should remain accepted-risk
+	out, code = runCLI(t, dir, "list", "--status", "accepted-risk")
+	if code != 0 {
+		t.Fatalf("list accepted-risk exit=%d out=%s", code, out)
+	}
+	if !strings.Contains(out, incidentID) {
+		t.Fatalf("incident should remain accepted-risk: %s", out)
+	}
+}
+
+func TestWontfixNeverReopens(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("first check exit=%d (want 2) out=%s", code, out)
+	}
+	incidentID := firstIncidentID(out)
+	if incidentID == "" {
+		t.Fatalf("missing id: %s", out)
+	}
+
+	// Mark as wontfix (terminal status)
+	out, code = runCLI(t, dir, "resolve", incidentID, "--note", "not our problem", "--status", "wontfix")
+	if code != 0 {
+		t.Fatalf("resolve wontfix exit=%d out=%s", code, out)
+	}
+
+	// Second check should NOT reopen wontfix even with critical findings
+	_, stderr, code := runCLIFull(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("check exit=%d (want 2 from findings severity)", code)
+	}
+	// Should mention it's not modifying
+	if !strings.Contains(stderr, "wontfix") || !strings.Contains(stderr, "gate still passes") {
+		t.Logf("stderr: %s", stderr)
+	}
+
+	// Incident should remain wontfix
+	out, code = runCLI(t, dir, "list", "--status", "wontfix")
+	if code != 0 {
+		t.Fatalf("list wontfix exit=%d out=%s", code, out)
+	}
+	if !strings.Contains(out, incidentID) {
+		t.Fatalf("incident should remain wontfix: %s", out)
+	}
+}
+
+func TestGatePassNoOpenCritical(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+
+	// Before any check, gate should pass (no incidents at all)
+	out, code = runCLI(t, dir, "gate")
+	if code != 0 {
+		t.Fatalf("gate before check exit=%d (want 0) out=%s", code, out)
+	}
+	if !strings.Contains(out, "PASS") {
+		t.Fatalf("expected PASS in gate output: %s", out)
+	}
+}
+
+func TestGateBlocksCriticalOpen(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+
+	// Check creates a critical incident
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("check exit=%d (want 2) out=%s", code, out)
+	}
+	incidentID := firstIncidentID(out)
+	if incidentID == "" {
+		t.Fatalf("missing id: %s", out)
+	}
+
+	// Gate should block (critical open)
+	out, code = runCLI(t, dir, "gate")
+	if code != 2 {
+		t.Fatalf("gate with critical open exit=%d (want 2) out=%s", code, out)
+	}
+	if !strings.Contains(out, "BLOCK") {
+		t.Fatalf("expected BLOCK in gate output: %s", out)
+	}
+	if !strings.Contains(out, incidentID) {
+		t.Fatalf("expected incident ID in block message: %s", out)
+	}
+}
+
+func TestGatePassAfterResolve(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("check exit=%d (want 2) out=%s", code, out)
+	}
+	incidentID := firstIncidentID(out)
+	if incidentID == "" {
+		t.Fatalf("missing id: %s", out)
+	}
+
+	// Resolve the incident
+	out, code = runCLI(t, dir, "resolve", incidentID, "--note", "fixed")
+	if code != 0 {
+		t.Fatalf("resolve exit=%d out=%s", code, out)
+	}
+
+	// Gate should pass now (no open critical)
+	out, code = runCLI(t, dir, "gate")
+	if code != 0 {
+		t.Fatalf("gate after resolve exit=%d (want 0) out=%s", code, out)
+	}
+	if !strings.Contains(out, "PASS") {
+		t.Fatalf("expected PASS in gate output: %s", out)
+	}
+}
+
+func TestGatePassAfterAcceptedRisk(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("check exit=%d (want 2) out=%s", code, out)
+	}
+	incidentID := firstIncidentID(out)
+	if incidentID == "" {
+		t.Fatalf("missing id: %s", out)
+	}
+
+	// Mark as accepted-risk
+	out, code = runCLI(t, dir, "resolve", incidentID, "--note", "accepted", "--status", "accepted-risk")
+	if code != 0 {
+		t.Fatalf("resolve accepted-risk exit=%d out=%s", code, out)
+	}
+
+	// Gate should pass (accepted-risk is not blocking)
+	out, code = runCLI(t, dir, "gate")
+	if code != 0 {
+		t.Fatalf("gate after accepted-risk exit=%d (want 0) out=%s", code, out)
+	}
+	if !strings.Contains(out, "PASS") {
+		t.Fatalf("expected PASS in gate output: %s", out)
+	}
+}
+
+func TestCanPromoteAlias(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+
+	// can-promote is an alias for gate
+	out, code = runCLI(t, dir, "can-promote")
+	if code != 0 {
+		t.Fatalf("can-promote exit=%d (want 0) out=%s", code, out)
+	}
+	if !strings.Contains(out, "PASS") {
+		t.Fatalf("expected PASS in can-promote output: %s", out)
+	}
+}
+
+func TestStableIDSameRunID(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+
+	// First check
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("first check exit=%d (want 2) out=%s", code, out)
+	}
+	firstID := firstIncidentID(out)
+	if firstID == "" {
+		t.Fatalf("missing id: %s", out)
+	}
+
+	// Second check on same run - should get same ID
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("second check exit=%d (want 2) out=%s", code, out)
+	}
+	secondID := firstIncidentID(out)
+	if secondID == "" {
+		t.Fatalf("missing id: %s", out)
+	}
+
+	// IDs should be identical (stable)
+	if firstID != secondID {
+		t.Fatalf("ID changed between checks: %s vs %s", firstID, secondID)
+	}
+}
+
+func TestInPlaceUpdatePreservesHistory(t *testing.T) {
+	dir := t.TempDir()
+	out, code := runCLI(t, dir, "init")
+	if code != 0 {
+		t.Fatalf("init exit=%d out=%s", code, out)
+	}
+
+	// First check creates incident
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("first check exit=%d (want 2) out=%s", code, out)
+	}
+	incidentID := firstIncidentID(out)
+	if !strings.Contains(out, "created") {
+		t.Fatalf("expected 'created' in first check output: %s", out)
+	}
+
+	// Second check updates in place
+	out, code = runCLI(t, dir, "check")
+	if code != 2 {
+		t.Fatalf("second check exit=%d (want 2) out=%s", code, out)
+	}
+	if !strings.Contains(out, "updated") {
+		t.Fatalf("expected 'updated' in second check output: %s", out)
+	}
+
+	// Show incident to verify it exists and has same ID
+	out, code = runCLI(t, dir, "show", incidentID)
+	if code != 0 {
+		t.Fatalf("show exit=%d out=%s", code, out)
+	}
+	if !strings.Contains(out, incidentID) {
+		t.Fatalf("show should display incident: %s", out)
 	}
 }
 

@@ -1,0 +1,76 @@
+# Example GitHub Actions workflow demonstrating the warden gate command
+# This is an EXAMPLE ONLY — forecast-warden does not run a real promote pipeline.
+#
+# The gate command checks if model promotion is allowed:
+#   exit 0 = PASS — no critical-severity incident currently open
+#   exit 2 = BLOCK — at least one critical-severity incident is open
+#
+# Note: exit 1 is not used by the gate command (warnings do not block promotion).
+# Incidents with status accepted-risk or wontfix do not block.
+
+name: Forecast Gate Example
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Run ID to check (e.g. 2026-09-12)'
+        required: false
+        type: string
+
+jobs:
+  check-and-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build warden
+        run: go build -o warden ./cmd/warden
+
+      - name: Initialize warden (demo data)
+        run: ./warden init
+
+      - name: Run check
+        id: check
+        run: |
+          # Run check; exit code indicates severity (0=ok, 1=warning, 2=critical)
+          # Continue even if check finds issues
+          ./warden check ${{ inputs.run_id && format('--run-id {0}', inputs.run_id) || '' }} || true
+
+      - name: Run gate
+        id: gate
+        run: |
+          # Gate checks if promotion is allowed
+          # exit 0 = promote ok, exit 2 = blocked
+          if ./warden gate; then
+            echo "gate_passed=true" >> $GITHUB_OUTPUT
+            echo "✅ Gate PASSED — safe to promote"
+          else
+            echo "gate_passed=false" >> $GITHUB_OUTPUT
+            echo "❌ Gate BLOCKED — critical open incident(s)"
+            exit 1  # Fail the workflow
+          fi
+
+      # Alternative: use the 'can-promote' alias
+      # - name: Can promote?
+      #   run: ./warden can-promote
+
+    outputs:
+      gate_passed: ${{ steps.gate.outputs.gate_passed }}
+
+  # Example downstream job that only runs if gate passes
+  promote:
+    needs: check-and-gate
+    if: needs.check-and-gate.outputs.gate_passed == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Promote model
+        run: |
+          echo "🚀 Gate passed — proceeding with model promotion"
+          # Your actual promotion logic here
+          # e.g., copy model artifacts, update model registry, etc.
