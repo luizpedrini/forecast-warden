@@ -18,11 +18,14 @@ var ErrNotImplemented = errors.New("not implemented yet")
 
 // Config selects and configures a Store driver.
 type Config struct {
-	// Driver is sqlite (default), file (legacy md+json), or postgres (stub).
+	// Driver is sqlite (default), file (legacy md+json), postgres (stub), or bigquery.
 	Driver string
-	// DSN is the sqlite file path (default data/warden.db). Ignored by file.
+	// DSN is driver-specific:
+	//   sqlite    — file path (default data/warden.db)
+	//   bigquery  — "<project>" or "<project>/<dataset>"
+	//   file      — ignored
 	DSN string
-	// WriteMarkdown also writes incidents/*.md for humans (sqlite default true).
+	// WriteMarkdown also writes incidents/*.md for humans (sqlite/bigquery default true).
 	WriteMarkdown bool
 	// IncidentsDir is the directory for markdown/json (file driver + optional md).
 	IncidentsDir string
@@ -65,8 +68,10 @@ func Open(cfg Config) (Store, error) {
 		return openFile(cfg)
 	case "postgres", "postgresql":
 		return nil, fmt.Errorf("store driver %q: %w", cfg.Driver, ErrNotImplemented)
+	case "bigquery":
+		return openBigQuery(cfg)
 	default:
-		return nil, fmt.Errorf("unknown store driver %q (want sqlite|file|postgres)", cfg.Driver)
+		return nil, fmt.Errorf("unknown store driver %q (want sqlite|file|postgres|bigquery)", cfg.Driver)
 	}
 }
 
