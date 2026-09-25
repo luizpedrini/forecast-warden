@@ -19,6 +19,7 @@ type Client interface {
 const (
 	ProviderOpenAI    = "openai"
 	ProviderAnthropic = "anthropic"
+	ProviderGemini    = "gemini"
 )
 
 const (
@@ -26,9 +27,11 @@ const (
 	envModel        = "WARDEN_LLM_MODEL"
 	envOpenAIKey    = "OPENAI_API_KEY"
 	envAnthropicKey = "ANTHROPIC_API_KEY"
+	envGeminiKey    = "GEMINI_API_KEY"
 
 	defaultOpenAIModel    = "gpt-4o-mini"
 	defaultAnthropicModel = "claude-3-5-haiku-latest"
+	defaultGeminiModel    = "gemini-2.0-flash"
 	defaultTimeout        = 45 * time.Second
 )
 
@@ -52,6 +55,8 @@ func ResolveModel(provider string) string {
 	switch ResolveProvider(provider) {
 	case ProviderAnthropic:
 		return defaultAnthropicModel
+	case ProviderGemini:
+		return defaultGeminiModel
 	default:
 		return defaultOpenAIModel
 	}
@@ -72,8 +77,14 @@ func APIKeyFor(provider string) (string, error) {
 			return "", fmt.Errorf("missing %s (required for --llm --provider anthropic)", envAnthropicKey)
 		}
 		return k, nil
+	case ProviderGemini:
+		k := strings.TrimSpace(os.Getenv(envGeminiKey))
+		if k == "" {
+			return "", fmt.Errorf("missing %s (required for --llm --provider gemini)", envGeminiKey)
+		}
+		return k, nil
 	default:
-		return "", fmt.Errorf("unknown LLM provider %q (want openai|anthropic)", provider)
+		return "", fmt.Errorf("unknown LLM provider %q (want openai|anthropic|gemini)", provider)
 	}
 }
 
@@ -90,7 +101,9 @@ func NewClientFromEnv(provider string) (Client, error) {
 		return NewOpenAIClient(key, model), nil
 	case ProviderAnthropic:
 		return NewAnthropicClient(key, model), nil
+	case ProviderGemini:
+		return NewGeminiClient(key, model), nil
 	default:
-		return nil, fmt.Errorf("unknown LLM provider %q (want openai|anthropic)", p)
+		return nil, fmt.Errorf("unknown LLM provider %q (want openai|anthropic|gemini)", p)
 	}
 }

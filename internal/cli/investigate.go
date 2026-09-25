@@ -24,10 +24,10 @@ var investigateCmd = &cobra.Command{
 
 Always builds the rule-based playbook first (templates + combo hints; no warehouse).
 Optional --llm enriches with a "## LLM synthesis" section (paragraph + ranked
-hypotheses + optional note) via OpenAI or Anthropic. API keys come from the
-environment only (OPENAI_API_KEY / ANTHROPIC_API_KEY). On any LLM failure, a
-warning is printed to stderr and the rule-based playbook is still emitted
-(exit 0 if the investigate itself succeeded).
+hypotheses + optional note) via OpenAI, Anthropic, or Gemini. API keys come from
+the environment only (OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY). On any
+LLM failure, a warning is printed to stderr and the rule-based playbook is still
+emitted (exit 0 if the investigate itself succeeded).
 
 Use --write to also save incidents/<id>.investigate.md.`,
 	Args: cobra.ExactArgs(1),
@@ -90,6 +90,6 @@ Use --write to also save incidents/<id>.investigate.md.`,
 func init() {
 	investigateCmd.Flags().Bool("write", false, "Also save incidents/<id>.investigate.md")
 	investigateCmd.Flags().Bool("llm", false, "Enrich playbook with LLM synthesis (env API keys)")
-	investigateCmd.Flags().String("provider", "", "LLM provider: openai|anthropic (default: WARDEN_LLM_PROVIDER or openai)")
+	investigateCmd.Flags().String("provider", "", "LLM provider: openai|anthropic|gemini (default: WARDEN_LLM_PROVIDER or openai)")
 	investigateCmd.Flags().StringVar(&investigateConfig, "config", "warden.yaml", "Config path")
 }
