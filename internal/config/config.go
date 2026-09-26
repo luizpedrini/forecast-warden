@@ -35,9 +35,9 @@ type LegacyThresholds struct {
 
 // StoreConfig selects the persistence driver (sqlite default).
 type StoreConfig struct {
-	Driver        string `yaml:"driver" json:"driver"`                   // sqlite | file | postgres
-	DSN           string `yaml:"dsn" json:"dsn"`                         // sqlite path
-	WriteMarkdown *bool  `yaml:"write_markdown" json:"write_markdown"`   // nil → true
+	Driver        string `yaml:"driver" json:"driver"`                 // sqlite | file | postgres | bigquery
+	DSN           string `yaml:"dsn" json:"dsn"`                       // sqlite path OR bigquery "<project>/<dataset>"
+	WriteMarkdown *bool  `yaml:"write_markdown" json:"write_markdown"` // nil → true
 }
 
 type WardenConfig struct {
@@ -165,7 +165,9 @@ incidents_dir: incidents
 metrics_filename: run_metrics.csv
 baseline_filename: baseline_stats.csv
 
-# Persistence: sqlite (default) | file (legacy md+json) | postgres (not implemented yet)
+# Persistence: sqlite (default) | file (legacy md+json) | postgres (stub) | bigquery
+# bigquery DSN format: "<gcp-project>" or "<gcp-project>/<dataset>"
+# Auth: Application Default Credentials (GOOGLE_APPLICATION_CREDENTIALS or gcloud auth)
 store:
   driver: sqlite
   dsn: data/warden.db
